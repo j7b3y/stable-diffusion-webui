@@ -17,6 +17,7 @@ package-lock.json
 venv
 .history
 cache
+outputs
 **/.DS_Store
 
 # all models and temp files
@@ -63,3 +64,5 @@ cache
 !/models/VAE-approx/model.pt
 !/models/Reference
 !/models/Reference/**/*
+!/models/styles
+!/models/Lora
