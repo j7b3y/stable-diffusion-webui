@@ -37,12 +37,19 @@ def single_sample_to_image(sample, approximation=None):
             warn_once('Unknown decode type, please reset preview method')
             approximation = 0
 
+    # normal sample is [4,64,64]
+    if sample.dtype == torch.bfloat16:
+        sample = sample.to(torch.float16)
+    if len(sample.shape) > 4: # likely unknown video latent (e.g. svd)
+        return Image.new(mode="RGB", size=(512, 512))
+    if len(sample.shape) == 4 and sample.shape[0]: # likely animatediff latent
+        sample = sample.permute(1, 0, 2, 3)[0]
     if approximation == 0: # Simple
         x_sample = sd_vae_approx.cheap_approximation(sample) * 0.5 + 0.5
     elif approximation == 1: # Approximate
         x_sample = sd_vae_approx.nn_approximation(sample) * 0.5 + 0.5
         if shared.sd_model_type == "sdxl":
-            x_sample = x_sample[[2,1,0],:,:] # BGR to RGB
+            x_sample = x_sample[[2,1,0], :, :] # BGR to RGB
     elif approximation == 2: # TAESD
         x_sample = sd_vae_taesd.decode(sample)
         x_sample = (1.0 + x_sample) / 2.0 # preview requires smaller range
@@ -53,10 +60,12 @@ def single_sample_to_image(sample, approximation=None):
         return Image.new(mode="RGB", size=(512, 512))
 
     try:
+        if x_sample.dtype == torch.bfloat16:
+            x_sample.to(torch.float16)
         transform = T.ToPILImage()
         image = transform(x_sample)
     except Exception as e:
-        warn_once(f'Transform tensor to image: {e}')
+        warn_once(f'Live preview: {e}')
         image = Image.new(mode="RGB", size=(512, 512))
     return image
 

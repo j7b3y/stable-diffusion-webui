@@ -32,7 +32,8 @@ sd_configs_path = os.path.join(script_path, "configs")
 sd_default_config = os.path.join(sd_configs_path, "v1-inference.yaml")
 sd_model_file = cli.ckpt or os.path.join(script_path, 'model.ckpt') # not used
 default_sd_model_file = sd_model_file # not used
-debug = log.info if os.environ.get('SD_PATH_DEBUG', None) is not None else lambda *args, **kwargs: None
+debug = log.trace if os.environ.get('SD_PATH_DEBUG', None) is not None else lambda *args, **kwargs: None
+debug('Trace: PATH')
 paths = {}
 
 if os.environ.get('SD_PATH_DEBUG', None) is not None:
@@ -103,11 +104,15 @@ def create_paths(opts):
     create_path(fix_path('outdir_samples'))
     create_path(fix_path('outdir_txt2img_samples'))
     create_path(fix_path('outdir_img2img_samples'))
+    create_path(fix_path('outdir_control_samples'))
     create_path(fix_path('outdir_extras_samples'))
+    create_path(fix_path('outdir_init_images'))
     create_path(fix_path('outdir_grids'))
     create_path(fix_path('outdir_txt2img_grids'))
     create_path(fix_path('outdir_img2img_grids'))
+    create_path(fix_path('outdir_control_grids'))
     create_path(fix_path('outdir_save'))
+    create_path(fix_path('outdir_video'))
     create_path(fix_path('styles_dir'))
 
 

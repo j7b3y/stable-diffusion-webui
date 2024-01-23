@@ -33,6 +33,7 @@ outputs
 *.lock
 *.zip
 *.rar
+*.7z
 *.pyc
 /*.bat
 /*.sh
@@ -58,6 +59,8 @@ outputs
 .vscode/
 .idea/
 /localizations
+
+.*/
 
 # force included
 !/models/VAE-approx

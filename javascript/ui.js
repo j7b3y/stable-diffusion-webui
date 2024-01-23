@@ -7,6 +7,7 @@ let img2img_textarea;
 const wait_time = 800;
 const token_timeouts = {};
 let uiLoaded = false;
+window.args_to_array = Array.from; // Compatibility with e.g. extensions that may expect this to be around
 
 function rememberGallerySelection(name) {
   // dummy
@@ -64,40 +65,83 @@ function extract_image_from_gallery(gallery) {
   return [gallery[index]];
 }
 
-window.args_to_array = Array.from; // Compatibility with e.g. extensions that may expect this to be around
+async function setTheme(val, old) {
+  if (!old) return;
+  const links = Array.from(document.getElementsByTagName('link')).filter((l) => l.href.includes(old));
+  for (const link of links) {
+    const href = link.href.replace(old, val);
+    const res = await fetch(href);
+    if (res.ok) {
+      log('setTheme:', old, val);
+      link.href = link.href.replace(old, val);
+    } else {
+      log('setTheme: CSS not found', val);
+    }
+  }
+}
+
+function setFontSize(val) {
+  const size = val || opts.font_size;
+  document.documentElement.style.setProperty('--font-size', `${size}px`);
+  gradioApp().style.setProperty('--font-size', `${size}px`);
+  gradioApp().style.setProperty('--text-xxs', `${size - 3}px`);
+  gradioApp().style.setProperty('--text-xs', `${size - 2}px`);
+  gradioApp().style.setProperty('--text-sm', `${size - 1}px`);
+  gradioApp().style.setProperty('--text-md', `${size}px`);
+  gradioApp().style.setProperty('--text-lg', `${size + 1}px`);
+  gradioApp().style.setProperty('--text-xl', `${size + 2}px`);
+  gradioApp().style.setProperty('--text-xxl', `${size + 3}px`);
+  log('setFontSize', size);
+}
+
+function switchToTab(tab) {
+  const tabs = Array.from(gradioApp().querySelectorAll('#tabs > .tab-nav > button'));
+  const btn = tabs?.find((t) => t.innerText === tab);
+  log('switchToTab', tab);
+  if (btn) btn.click();
+}
 
 function switch_to_txt2img(...args) {
-  gradioApp().querySelector('#tabs').querySelectorAll('button')[0].click();
+  switchToTab('Text');
   return Array.from(arguments);
 }
 
 function switch_to_img2img_tab(no) {
-  gradioApp().querySelector('#tabs').querySelectorAll('button')[1].click();
+  switchToTab('Image');
   gradioApp().getElementById('mode_img2img').querySelectorAll('button')[no].click();
 }
 
 function switch_to_img2img(...args) {
+  switchToTab('Image');
   switch_to_img2img_tab(0);
   return Array.from(arguments);
 }
 
 function switch_to_sketch(...args) {
+  switchToTab('Image');
   switch_to_img2img_tab(1);
   return Array.from(arguments);
 }
 
 function switch_to_inpaint(...args) {
+  switchToTab('Image');
   switch_to_img2img_tab(2);
   return Array.from(arguments);
 }
 
 function switch_to_inpaint_sketch(...args) {
+  switchToTab('Image');
   switch_to_img2img_tab(3);
   return Array.from(arguments);
 }
 
 function switch_to_extras(...args) {
-  gradioApp().querySelector('#tabs').querySelectorAll('button')[2].click();
+  switchToTab('Process');
+  return Array.from(arguments);
+}
+
+function switch_to_control(...args) {
+  switchToTab('Control');
   return Array.from(arguments);
 }
 
@@ -164,6 +208,17 @@ function submit_img2img(...args) {
   return res;
 }
 
+function submit_control(...args) {
+  log('submitControl');
+  clearGallery('control');
+  const id = randomId();
+  requestProgress(id, null, gradioApp().getElementById('control_gallery'));
+  const res = create_submit_args(args);
+  res[0] = id;
+  res[1] = gradioApp().querySelector('#control-tabs > .tab-nav > .selected')?.innerText.toLowerCase() || ''; // selected tab name
+  return res;
+}
+
 function submit_postprocessing(...args) {
   log('SubmitExtras');
   clearGallery('extras');
@@ -208,6 +263,12 @@ function recalculate_prompts_img2img(...args) {
 function recalculate_prompts_inpaint(...args) {
   recalculatePromptTokens('img2img_prompt');
   recalculatePromptTokens('img2img_neg_prompt');
+  return Array.from(arguments);
+}
+
+function recalculate_prompts_control(...args) {
+  recalculatePromptTokens('control_prompt');
+  recalculatePromptTokens('control_neg_prompt');
   return Array.from(arguments);
 }
 
@@ -279,6 +340,8 @@ onAfterUiUpdate(async () => {
   registerTextarea('txt2img_neg_prompt', 'txt2img_negative_token_counter', 'txt2img_negative_token_button');
   registerTextarea('img2img_prompt', 'img2img_token_counter', 'img2img_token_button');
   registerTextarea('img2img_neg_prompt', 'img2img_negative_token_counter', 'img2img_negative_token_button');
+  registerTextarea('control_prompt', 'control_token_counter', 'control_token_button');
+  registerTextarea('control_neg_prompt', 'control_negative_token_counter', 'control_negative_token_button');
 });
 
 function update_txt2img_tokens(...args) {
@@ -306,7 +369,7 @@ function monitorServerStatus() {
         <h1>Waiting for server...</h1>
         <script>
           function monitorServerStatus() {
-            fetch('/sdapi/v1/progress')
+            fetch('/sdapi/v1/progress?skip_current_image=true')
               .then((res) => { !res?.ok ? setTimeout(monitorServerStatus, 1000) : location.reload(); })
               .catch((e) => setTimeout(monitorServerStatus, 1000))
           }
@@ -321,7 +384,7 @@ function monitorServerStatus() {
 function restartReload() {
   document.body.style = 'background: #222222; font-size: 1rem; font-family:monospace; margin-top:20%; color:lightgray; text-align:center';
   document.body.innerHTML = '<h1>Server shutdown in progress...</h1>';
-  fetch('/sdapi/v1/progress')
+  fetch('/sdapi/v1/progress?skip_current_image=true')
     .then((res) => setTimeout(restartReload, 1000))
     .catch((e) => setTimeout(monitorServerStatus, 500));
   return [];
@@ -356,8 +419,13 @@ function selectReference(name) {
   gradioApp().getElementById('change_reference').click();
 }
 
-function currentImg2imgSourceResolution(_a, _b, scaleBy) {
+function currentImageResolutionimg2img(_a, _b, scaleBy) {
   const img = gradioApp().querySelector('#mode_img2img > div[style="display: block;"] img');
+  return img ? [img.naturalWidth, img.naturalHeight, scaleBy] : [0, 0, scaleBy];
+}
+
+function currentImageResolutioncontrol(_a, _b, scaleBy) {
+  const img = gradioApp().querySelector('#control-tab-input > div[style="display: block;"] img');
   return img ? [img.naturalWidth, img.naturalHeight, scaleBy] : [0, 0, scaleBy];
 }
 

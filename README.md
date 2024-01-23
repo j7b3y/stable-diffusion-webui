@@ -20,7 +20,9 @@ All individual features are not listed here, instead check [ChangeLog](CHANGELOG
 - Multiple backends!  
   ▹ **Original | Diffusers**
 - Multiple diffusion models!  
-  ▹ **Stable Diffusion | SD-XL | LCM | Segmind | Kandinsky | Pixart-α | Würstchen | DeepFloyd IF | UniDiffusion | SD-Distilled | etc.**
+  ▹ **Stable Diffusion 1.5/2.1 | SD-XL | LCM | Segmind | Kandinsky | Pixart-α | Würstchen | aMUSEd | DeepFloyd IF | UniDiffusion | SD-Distilled | BLiP Diffusion | etc.**
+- Built-in Control for Text, Image, Batch and video processing!  
+  ▹ **ControlNet | ControlNet XS | Control LLLite | T2I Adapters | IP Adapters**  
 - Multiplatform!  
  ▹ **Windows | Linux | MacOS with CPU | nVidia | AMD | IntelArc | DirectML | OpenVINO | ONNX+Olive**
 - Platform specific autodetection and tuning performed on install
@@ -28,7 +30,6 @@ All individual features are not listed here, instead check [ChangeLog](CHANGELOG
 - Improved prompt parser  
 - Enhanced *Lora*/*LoCon*/*Lyco* code supporting latest trends in training  
 - Built-in queue management  
-- Advanced metadata caching and handling to speed up operations  
 - Enterprise level logging and hardened API  
 - Modern localization and hints engine  
 - Broad compatibility with existing extensions ecosystem and new extensions manager  
@@ -37,7 +38,8 @@ All individual features are not listed here, instead check [ChangeLog](CHANGELOG
 
 <br>
 
-![Screenshot-Dark](html/black-teal.jpg)
+![Screenshot-Dark](html/xmas-default.jpg)
+![Screenshot-Control](html/xmas-control.jpg)
 ![Screenshot-Light](html/light-teal.jpg)
 
 <br>
@@ -58,20 +60,33 @@ All individual features are not listed here, instead check [ChangeLog](CHANGELOG
 
 Additional models will be added as they become available and there is public interest in them
 
-- [RunwayML Stable Diffusion](https://github.com/Stability-AI/stablediffusion/) 1.x and 2.x *(all variants)*
-- [StabilityAI Stable Diffusion XL](https://github.com/Stability-AI/generative-models)
-- [Segmind SSD-1B](https://huggingface.co/segmind/SSD-1B)
-- [LCM: Latent Consistency Models](https://github.com/openai/consistency_models)
-- [Kandinsky](https://github.com/ai-forever/Kandinsky-2) *2.1 and 2.2 and latest 3.0*
-- [PixArt-α XL 2](https://github.com/PixArt-alpha/PixArt-alpha) *Medium and Large*
+- [RunwayML Stable Diffusion](https://github.com/Stability-AI/stablediffusion/) 1.x and 2.x *(all variants)*  
+- [StabilityAI Stable Diffusion XL](https://github.com/Stability-AI/generative-models)  
+- [StabilityAI Stable Video Diffusion](https://huggingface.co/stabilityai/stable-video-diffusion-img2vid) Base and XT  
+- [LCM: Latent Consistency Models](https://github.com/openai/consistency_models)  
+- [aMUSEd 256](https://huggingface.co/amused/amused-256) 256 and 512
+- [Segmind Vega](https://huggingface.co/segmind/Segmind-Vega)  
+- [Segmind SSD-1B](https://huggingface.co/segmind/SSD-1B)  
+- [Kandinsky](https://github.com/ai-forever/Kandinsky-2) *2.1 and 2.2 and latest 3.0*  
+- [PixArt-α XL 2](https://github.com/PixArt-alpha/PixArt-alpha) *Medium and Large*  
 - [Warp Wuerstchen](https://huggingface.co/blog/wuertschen)  
+- [Playground](https://huggingface.co/playgroundai/playground-v2-256px-base) *v1, v2 256, v2 512, v2 1024*  
 - [Tsinghua UniDiffusion](https://github.com/thu-ml/unidiffuser)
 - [DeepFloyd IF](https://github.com/deep-floyd/IF) *Medium and Large*
+- [ModelScope T2V](https://huggingface.co/damo-vilab/text-to-video-ms-1.7b)
 - [Segmind SD Distilled](https://huggingface.co/blog/sd_distillation) *(all variants)*
+- [BLIP-Diffusion](https://dxli94.github.io/BLIP-Diffusion-website/)  
+
+
+Also supported are modifiers such as:
+- **LCM** and **Turbo** (Adversarial Diffusion Distillation) networks
+- All **LoRA** types such as LoCon, LyCORIS, HADA, IA3, Lokr, OFT
+- **AnimateDiff** for SD 1.5
+- **IP-Adapters** for SD 1.5 and SD-XL
 
 > [!IMPORTANT]
 > - Loading any model other than standard SD 1.x / SD 2.x requires use of backend **Diffusers**  
-> - Loading any other models using **Original** backend is not supproted  
+> - Loading any other models using **Original** backend is not supported  
 > - Loading manually download model `.safetensors` files is supported for SD 1.x / SD 2.x / SD-XL models only  
 > - For all other model types, use backend **Diffusers** and use built in Model downloader or  
   select model from Networks -> Models -> Reference list in which case it will be auto-downloaded and loaded  
@@ -128,7 +143,6 @@ Below is partial list of all available parameters, run `webui --help` for the fu
       --docs                           Mount Gradio docs at /docs, default: False
       --no-hashing                     Disable hashing of checkpoints, default: False
       --no-metadata                    Disable reading of metadata from models, default: False
-      --no-download                    Disable download of default model, default: False
       --backend {original,diffusers}   force model pipeline type
 
     Setup options:
@@ -169,31 +183,6 @@ SD.Next comes with several extensions pre-installed:
 - In addition to general cross-platform code, desire is to have a lead for each of the main platforms.
 This should be fully cross-platform, but we'd really love to have additional contributors and/or maintainers to join and help lead the efforts on different platforms.
 
-### **Goals**
-
-This project started as a fork from [Automatic1111 WebUI](https://github.com/AUTOMATIC1111/stable-diffusion-webui/) and it grew significantly since then,  
-but although it diverged considerably, any substantial features to original work is ported to this repository as well.
-
-The idea behind the fork is to enable latest technologies and advances in text-to-image generation.
-
-*Sometimes this is not the same as "as simple as possible to use".*
-
-General goals:
-
-- Multi-model
-  - Enable usage of as many as possible txt2img and img2img generative models  
-- Cross-platform
-  - Create uniform experience while automatically managing any platform specific differences
-- Performance
-  - Enable best possible performance on all platforms
-- Ease-of-Use
-  - Automatically handle all requirements, dependencies, flags regardless of platform
-  - Integrate all best options for uniform out-of-the-box experience without the need to tweak anything manually
-- Look-and-Feel
-  - Create modern, intuitive and clean UI
-- Up-to-Date
-  - Keep code up to date with latest advanced in text-to-image generation
-
 ## Credits
 
 - Main credit goes to [Automatic1111 WebUI](https://github.com/AUTOMATIC1111/stable-diffusion-webui)
@@ -201,6 +190,9 @@ General goals:
 - Licenses for modules are listed in [Licenses](html/licenses.html)
 
 ### **Docs**
+
+If you're unsure how to use a feature, best place to start is [Wiki](https://github.com/vladmandic/automatic/wiki) and if its not there,  
+check [ChangeLog](CHANGELOG.md) for when feature was first introduced as it will always have a short note on how to use it  
 
 - [Wiki](https://github.com/vladmandic/automatic/wiki)
 - [ReadMe](README.md)
@@ -211,7 +203,7 @@ General goals:
 ### **Sponsors**
 
 <div align="center">
-<!-- sponsors --><a href="https://github.com/Tillerz"><img src="https://github.com/Tillerz.png" width="60px" alt="Tillerz" /></a><a href="https://github.com/allangrant"><img src="https://github.com/allangrant.png" width="60px" alt="Allan Grant" /></a><a href="https://github.com/demib72"><img src="https://github.com/demib72.png" width="60px" alt="Michael Harris" /></a><a href="https://github.com/BrentOzar"><img src="https://github.com/BrentOzar.png" width="60px" alt="Brent Ozar" /></a><a href="https://github.com/AimwiseTonix"><img src="https://github.com/AimwiseTonix.png" width="60px" alt="ToniX" /></a><a href="https://github.com/inktomi"><img src="https://github.com/inktomi.png" width="60px" alt="Matthew Runo" /></a><a href="https://github.com/HELLO-WORLD-SAS"><img src="https://github.com/HELLO-WORLD-SAS.png" width="60px" alt="HELLO WORLD SAS" /></a><a href="https://github.com/4joeknight4"><img src="https://github.com/4joeknight4.png" width="60px" alt="" /></a><a href="https://github.com/SaladTechnologies"><img src="https://github.com/SaladTechnologies.png" width="60px" alt="Salad Technologies" /></a><a href="https://github.com/mantzaris"><img src="https://github.com/mantzaris.png" width="60px" alt="a.v.mantzaris" /></a><!-- sponsors -->
+<!-- sponsors --><a href="https://github.com/allangrant"><img src="https://github.com/allangrant.png" width="60px" alt="Allan Grant" /></a><a href="https://github.com/BrentOzar"><img src="https://github.com/BrentOzar.png" width="60px" alt="Brent Ozar" /></a><a href="https://github.com/inktomi"><img src="https://github.com/inktomi.png" width="60px" alt="Matthew Runo" /></a><a href="https://github.com/HELLO-WORLD-SAS"><img src="https://github.com/HELLO-WORLD-SAS.png" width="60px" alt="HELLO WORLD SAS" /></a><a href="https://github.com/4joeknight4"><img src="https://github.com/4joeknight4.png" width="60px" alt="" /></a><a href="https://github.com/SaladTechnologies"><img src="https://github.com/SaladTechnologies.png" width="60px" alt="Salad Technologies" /></a><a href="https://github.com/mantzaris"><img src="https://github.com/mantzaris.png" width="60px" alt="a.v.mantzaris" /></a><a href="https://github.com/FieldMarshallVague"><img src="https://github.com/FieldMarshallVague.png" width="60px" alt="Toby Worth" /></a><!-- sponsors -->
 </div>
 
 <br>

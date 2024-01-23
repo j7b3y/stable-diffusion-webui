@@ -1,10 +1,10 @@
+import os
 import io
 import re
 import time
 import json
 import html
 import base64
-import os.path
 import urllib.parse
 import threading
 from datetime import datetime
@@ -15,16 +15,16 @@ from collections import OrderedDict
 import gradio as gr
 from PIL import Image
 from starlette.responses import FileResponse, JSONResponse
-from modules import paths, shared, scripts, modelloader
+from modules import paths, shared, scripts, files_cache, errors
 from modules.ui_components import ToolButton
 import modules.ui_symbols as symbols
 
 
 allowed_dirs = []
-dir_cache = {} # key=path, value=(mtime, listdir(path))
 refresh_time = 0
 extra_pages = shared.extra_networks
-debug = shared.log.info if os.environ.get('SD_EN_DEBUG', None) is not None else lambda *args, **kwargs: None
+debug = shared.log.trace if os.environ.get('SD_EN_DEBUG', None) is not None else lambda *args, **kwargs: None
+debug('Trace: EN')
 card_full = '''
     <div class='card' onclick={card_click} title='{name}' data-tab='{tabname}' data-page='{page}' data-name='{name}' data-filename='{filename}' data-tags='{tags}' data-mtime='{mtime}' data-size='{size}' data-search='{search}'>
         <div class='overlay'>
@@ -47,17 +47,6 @@ card_list = '''
         </div>
     </div>
 '''
-
-
-def listdir(path):
-    if not os.path.exists(path):
-        return []
-    if path in dir_cache and os.path.getmtime(path) == dir_cache[path][0]:
-        return dir_cache[path][1]
-    else:
-        # debug(f'EN list-dir list: {path}')
-        dir_cache[path] = (os.path.getmtime(path), [os.path.join(path, f) for f in os.listdir(path)])
-        return dir_cache[path][1]
 
 
 def init_api(app):
@@ -130,6 +119,7 @@ class ExtraNetworksPage:
         self.list_time = 0
         self.info_time = 0
         self.desc_time = 0
+        self.preview_time = 0
         self.dirs = {}
         self.view = shared.opts.extra_networks_view
         self.card = card_full if shared.opts.extra_networks_view == 'gallery' else card_list
@@ -159,26 +149,18 @@ class ExtraNetworksPage:
         preview = f"./sd_extra_networks/thumb?filename={quoted_filename}&mtime={mtime}"
         return preview
 
-    def search_terms_from_path(self, filename):
-        return filename.replace('\\', '/')
-
     def is_empty(self, folder):
-        for f in listdir(folder):
-            _fn, ext = os.path.splitext(f)
-            if ext.lower() in ['.ckpt', '.safetensors', '.pt', '.json'] or os.path.isdir(os.path.join(folder, f)):
-                return False
-        return True
+        return any(files_cache.list_files(folder, ext_filter=['.ckpt', '.safetensors', '.pt', '.json']))
 
     def create_thumb(self):
         debug(f'EN create-thumb: {self.name}')
         created = 0
         for f in self.missing_thumbs:
-            if not os.path.exists(f):
+            if os.path.join('models', 'Reference') in f or not os.path.exists(f):
                 continue
-            fn, _ext = os.path.splitext(f)
-            fn = fn.replace('.preview', '')
+            fn = os.path.splitext(f)[0].replace('.preview', '')
             fn = f'{fn}.thumb.jpg'
-            if os.path.exists(fn):
+            if os.path.exists(fn): # thumbnail already exists
                 continue
             img = None
             try:
@@ -212,6 +194,8 @@ class ExtraNetworksPage:
         except Exception as e:
             self.items = []
             shared.log.error(f'Extra networks error listing items: class={self.__class__.__name__} tab={tabname} {e}')
+            if os.environ.get('SD_EN_DEBUG', None):
+                errors.display(e, f'Extra networks error listing items: class={self.__class__.__name__} tab={tabname}')
         for item in self.items:
             if item is None:
                 continue
@@ -229,25 +213,26 @@ class ExtraNetworksPage:
         if skip:
             return f"<div id='{tabname}_{self_name_id}_subdirs' class='extra-network-subdirs'></div><div id='{tabname}_{self_name_id}_cards' class='extra-network-cards'>Extra network page not ready<br>Click refresh to try again</div>"
         subdirs = {}
-        allowed_folders = [os.path.abspath(x) for x in self.allowed_directories_for_previews()]
-        for parentdir, dirs in {d: modelloader.directory_list(d) for d in allowed_folders}.items():
-            for tgt in dirs.keys():
-                if shared.backend == shared.Backend.DIFFUSERS:
-                    if os.path.join(paths.models_path, 'Reference') in tgt:
-                        subdirs['Reference'] = 1
-                    if shared.opts.diffusers_dir in tgt:
-                        subdirs[os.path.basename(shared.opts.diffusers_dir)] = 1
+        allowed_folders = [os.path.abspath(x) for x in self.allowed_directories_for_previews() if os.path.exists(x)]
+        for parentdir, dirs in {d: files_cache.walk(d, cached=True, recurse=files_cache.not_hidden) for d in allowed_folders}.items():
+            for tgt in dirs:
+                tgt = tgt.path
+                if os.path.join(paths.models_path, 'Reference') in tgt:
+                    subdirs['Reference'] = 1
+                if shared.backend == shared.Backend.DIFFUSERS and shared.opts.diffusers_dir in tgt:
+                    subdirs[os.path.basename(shared.opts.diffusers_dir)] = 1
                 if 'models--' in tgt:
                     continue
                 subdir = tgt[len(parentdir):].replace("\\", "/")
                 while subdir.startswith("/"):
                     subdir = subdir[1:]
+                if not subdir:
+                    continue
                 # if not self.is_empty(tgt):
-                if not subdir.startswith("."):
-                    subdirs[subdir] = 1
+                subdirs[subdir] = 1
         debug(f"Extra networks: page='{self.name}' subfolders={list(subdirs)}")
         subdirs = OrderedDict(sorted(subdirs.items()))
-        if shared.backend == shared.Backend.DIFFUSERS and self.name == 'model':
+        if self.name == 'model':
             subdirs['Reference'] = 1
             subdirs[os.path.basename(shared.opts.diffusers_dir)] = 1
             subdirs.move_to_end(os.path.basename(shared.opts.diffusers_dir))
@@ -270,7 +255,7 @@ class ExtraNetworksPage:
             self.html = f"<div id='{tabname}_{self_name_id}_subdirs' class='extra-network-subdirs'>{subdirs_html}</div><div id='{tabname}_{self_name_id}_cards' class='extra-network-cards'>{self.html}</div>"
         else:
             return ''
-        shared.log.debug(f"Extra networks: page='{self.name}' items={len(self.items)} subfolders={len(subdirs)} tab={tabname} folders={self.allowed_directories_for_previews()} list={self.list_time:.2f} desc={self.desc_time:.2f} info={self.info_time:.2f}")
+        shared.log.debug(f"Extra networks: page='{self.name}' items={len(self.items)} subfolders={len(subdirs)} tab={tabname} folders={self.allowed_directories_for_previews()} list={self.list_time:.2f} thumb={self.preview_time:.2f} desc={self.desc_time:.2f} info={self.info_time:.2f} workers={shared.max_workers}")
         if len(self.missing_thumbs) > 0:
             threading.Thread(target=self.create_thumb).start()
         return self.html
@@ -312,25 +297,58 @@ class ExtraNetworksPage:
     def find_preview_file(self, path):
         if path is None:
             return 'html/card-no-preview.png'
+        if os.path.join('models', 'Reference') in path:
+            return path
+        exts = ["jpg", "jpeg", "png", "webp", "tiff", "jp2"]
         if shared.opts.diffusers_dir in path:
             path = os.path.relpath(path, shared.opts.diffusers_dir)
-            ref = os.path.join('models', 'Reference')
-            fn = os.path.join(ref, path.replace('models--', '').replace('\\', '/').split('/')[0])
-            files = listdir(ref)
+            reference_path = os.path.abspath(os.path.join('models', 'Reference'))
+            fn = os.path.join(reference_path, path.replace('models--', '').replace('\\', '/').split('/')[0])
+            files = list(files_cache.list_files(reference_path, ext_filter=exts, recursive=False))
         else:
-            files = listdir(os.path.dirname(path))
             fn = os.path.splitext(path)[0]
-        exts = ["jpg", "jpeg", "png", "webp", "tiff", "jp2"]
+            files = list(files_cache.list_files(os.path.dirname(path), ext_filter=exts, recursive=False))
         for file in [f'{fn}{mid}{ext}' for ext in exts for mid in ['.thumb.', '.', '.preview.']]:
             if file in files:
-                if 'Reference' not in file and '.thumb.' not in file:
+                if '.thumb.' not in file:
                     self.missing_thumbs.append(file)
                 return file
         return 'html/card-no-preview.png'
 
-    def find_preview(self, path):
-        preview_file = self.find_preview_file(path)
+    def find_preview(self, filename):
+        t0 = time.time()
+        preview_file = self.find_preview_file(filename)
+        self.preview_time += time.time() - t0
         return self.link_preview(preview_file)
+
+    def update_all_previews(self, items):
+        t0 = time.time()
+        reference_path = os.path.abspath(os.path.join('models', 'Reference'))
+        possible_paths = list(set([os.path.dirname(item['filename']) for item in items] + [reference_path]))
+        exts = ["jpg", "jpeg", "png", "webp", "tiff", "jp2"]
+        all_previews = list(files_cache.list_files(*possible_paths, ext_filter=exts, recursive=False))
+        for item in items:
+            if item.get('preview', None) is not None:
+                continue
+            base = os.path.splitext(item['filename'])[0]
+            if item.get('local_preview', None) is None:
+                item['local_preview'] = f'{base}.{shared.opts.samples_format}'
+            if shared.opts.diffusers_dir in base:
+                match = re.search(r"models--([^/^\\]+)[/\\]", base)
+                base = os.path.join(reference_path, match[1])
+                model_path = os.path.join(shared.opts.diffusers_dir, match[0])
+                item['local_preview'] = f'{os.path.join(model_path, match[1])}.{shared.opts.samples_format}'
+                all_previews += list(files_cache.list_files(model_path, ext_filter=exts, recursive=False))
+            for file in [f'{base}{mid}{ext}' for ext in exts for mid in ['.thumb.', '.', '.preview.']]:
+                if file in all_previews:
+                    if '.thumb.' not in file:
+                        self.missing_thumbs.append(file)
+                    item['preview'] = self.link_preview(file)
+                    break
+            if item.get('preview', None) is None:
+                item['preview'] = self.link_preview('html/card-no-preview.png')
+        self.preview_time += time.time() - t0
+
 
     def find_description(self, path, info=None):
         t0 = time.time()
@@ -343,8 +361,7 @@ class ExtraNetworksPage:
                     self.text += '\n'
 
         fn = os.path.splitext(path)[0] + '.txt'
-        # if os.path.exists(fn):
-        if fn in listdir(os.path.dirname(path)):
+        if os.path.exists(fn):
             try:
                 with open(fn, "r", encoding="utf-8", errors="replace") as f:
                     txt = f.read()
@@ -362,16 +379,17 @@ class ExtraNetworksPage:
         return f.text
 
     def find_info(self, path):
-        t0 = time.time()
-        fn = os.path.splitext(path)[0] + '.json'
-        # if os.path.exists(fn):
         data = {}
-        if fn in listdir(os.path.dirname(path)):
+        if shared.cmd_opts.no_metadata:
+            return data
+        fn = os.path.splitext(path)[0] + '.json'
+        if os.path.exists(fn):
+            t0 = time.time()
             data = shared.readfile(fn, silent=True)
             if type(data) is list:
                 data = data[0]
-        t1 = time.time()
-        self.info_time += t1-t0
+            t1 = time.time()
+            self.info_time += t1-t0
         return data
 
 
@@ -382,12 +400,15 @@ def initialize():
 def register_page(page: ExtraNetworksPage):
     # registers extra networks page for the UI; recommend doing it in on_before_ui() callback for extensions
     debug(f'EN register-page: {page}')
+    if page in shared.extra_networks:
+        debug(f'EN register-page: {page} already registered')
+        return
     shared.extra_networks.append(page)
-    allowed_dirs.clear()
-    for pg in shared.extra_networks:
-        for folder in pg.allowed_directories_for_previews():
-            if folder not in allowed_dirs:
-                allowed_dirs.append(os.path.abspath(folder))
+    # allowed_dirs.clear()
+    # for pg in shared.extra_networks:
+    for folder in page.allowed_directories_for_previews():
+        if folder not in allowed_dirs:
+            allowed_dirs.append(os.path.abspath(folder))
 
 
 def register_pages():
@@ -396,6 +417,7 @@ def register_pages():
     from modules.ui_extra_networks_checkpoints import ExtraNetworksPageCheckpoints
     from modules.ui_extra_networks_styles import ExtraNetworksPageStyles
     from modules.ui_extra_networks_vae import ExtraNetworksPageVAEs
+    debug('EN register-pages')
     register_page(ExtraNetworksPageCheckpoints())
     register_page(ExtraNetworksPageStyles())
     register_page(ExtraNetworksPageTextualInversion())
@@ -457,12 +479,16 @@ def create_ui(container, button_parent, tabname, skip_indexing = False):
     ui = ExtraNetworksUi()
     ui.tabname = tabname
     ui.pages = []
-    ui.state = gr.Textbox('{}', elem_id=tabname+"_extra_state", visible=False)
+    ui.state = gr.Textbox('{}', elem_id=f"{tabname}_extra_state", visible=False)
     ui.visible = gr.State(value=False) # pylint: disable=abstract-class-instantiated
-    ui.details = gr.Group(elem_id=tabname+"_extra_details", visible=False)
-    ui.tabs = gr.Tabs(elem_id=tabname+"_extra_tabs")
-    ui.button_details = gr.Button('Details', elem_id=tabname+"_extra_details_btn", visible=False)
+    ui.details = gr.Group(elem_id=f"{tabname}_extra_details", visible=False)
+    ui.tabs = gr.Tabs(elem_id=f"{tabname}_extra_tabs")
+    ui.button_details = gr.Button('Details', elem_id=f"{tabname}_extra_details_btn", visible=False)
     state = {}
+    if shared.cmd_opts.profile:
+        import cProfile
+        pr = cProfile.Profile()
+        pr.enable()
 
     def get_item(state, params = None):
         if params is not None and type(params) == dict:
@@ -498,14 +524,14 @@ def create_ui(container, button_parent, tabname, skip_indexing = False):
         return is_visible, gr.update(visible=is_visible), gr.update(variant=("secondary-down" if is_visible else "secondary"))
 
     with ui.details:
-        details_close = ToolButton(symbols.close, elem_id=tabname+"_extra_details_close", elem_classes=['extra-details-close'])
+        details_close = ToolButton(symbols.close, elem_id=f"{tabname}_extra_details_close", elem_classes=['extra-details-close'])
         details_close.click(fn=lambda: gr.update(visible=False), inputs=[], outputs=[ui.details])
         with gr.Row():
             with gr.Column(scale=1):
                 text = gr.HTML('<div>title</div>')
                 ui.details_components.append(text)
             with gr.Column(scale=1):
-                img = gr.Image(value=None, show_label=False, interactive=False, container=False, show_download_button=False, show_info=False, elem_id=tabname+"_extra_details_img", elem_classes=['extra-details-img'])
+                img = gr.Image(value=None, show_label=False, interactive=False, container=False, show_download_button=False, show_info=False, elem_id=f"{tabname}_extra_details_img", elem_classes=['extra-details-img'])
                 ui.details_components.append(img)
                 with gr.Row():
                     btn_save_img = gr.Button('Replace', elem_classes=['small-button'])
@@ -538,35 +564,34 @@ def create_ui(container, button_parent, tabname, skip_indexing = False):
             model_visible = page in ['Model']
             return [gr.update(visible=scan_visible), gr.update(visible=save_visible), gr.update(visible=model_visible)]
 
-        ui.button_refresh = ToolButton(symbols.refresh, elem_id=tabname+"_extra_refresh")
-        ui.button_scan = ToolButton(symbols.scan, elem_id=tabname+"_extra_scan", visible=True)
-        ui.button_quicksave = ToolButton(symbols.book, elem_id=tabname+"_extra_quicksave", visible=False)
-        ui.button_save = ToolButton(symbols.book, elem_id=tabname+"_extra_save", visible=False)
-        ui.button_sort = ToolButton(symbols.sort, elem_id=tabname+"_extra_sort", visible=True)
-        ui.button_view = ToolButton(symbols.view, elem_id=tabname+"_extra_view", visible=True)
-        ui.button_close = ToolButton(symbols.close, elem_id=tabname+"_extra_close", visible=True)
-        ui.button_model = ToolButton(symbols.refine, elem_id=tabname+"_extra_model", visible=True)
-        ui.search = gr.Textbox('', show_label=False, elem_id=tabname+"_extra_search", placeholder="Search...", elem_classes="textbox", lines=2, container=False)
-        ui.description = gr.Textbox('', show_label=False, elem_id=tabname+"_description", elem_classes="textbox", lines=2, interactive=False, container=False)
+        ui.button_refresh = ToolButton(symbols.refresh, elem_id=f"{tabname}_extra_refresh")
+        ui.button_scan = ToolButton(symbols.scan, elem_id=f"{tabname}_extra_scan", visible=True)
+        ui.button_quicksave = ToolButton(symbols.book, elem_id=f"{tabname}_extra_quicksave", visible=False)
+        ui.button_save = ToolButton(symbols.book, elem_id=f"{tabname}_extra_save", visible=False)
+        ui.button_sort = ToolButton(symbols.sort, elem_id=f"{tabname}_extra_sort", visible=True)
+        ui.button_view = ToolButton(symbols.view, elem_id=f"{tabname}_extra_view", visible=True)
+        ui.button_close = ToolButton(symbols.close, elem_id=f"{tabname}_extra_close", visible=True)
+        ui.button_model = ToolButton(symbols.refine, elem_id=f"{tabname}_extra_model", visible=True)
+        ui.search = gr.Textbox('', show_label=False, elem_id=f"{tabname}_extra_search", placeholder="Search...", elem_classes="textbox", lines=2, container=False)
+        ui.description = gr.Textbox('', show_label=False, elem_id=f"{tabname}_description", elem_classes="textbox", lines=2, interactive=False, container=False)
 
         if ui.tabname == 'txt2img': # refresh only once
             global refresh_time # pylint: disable=global-statement
             refresh_time = time.time()
-        threads = []
-        for page in get_pages():
-            if os.environ.get('SD_EN_DEBUG', None) is not None:
-                threads.append(threading.Thread(target=page.create_items, args=[ui.tabname]))
-                threads[-1].start()
-            else:
-                page.create_items(ui.tabname)
-        for thread in threads:
-            thread.join()
+        if not skip_indexing:
+            import concurrent
+            with concurrent.futures.ThreadPoolExecutor(max_workers=16) as executor:
+                for page in get_pages():
+                    executor.submit(page.create_items, page)
         for page in get_pages():
             page.create_page(ui.tabname, skip_indexing)
             with gr.Tab(page.title, id=page.title.lower().replace(" ", "_"), elem_classes="extra-networks-tab") as tab:
                 page_html = gr.HTML(page.html, elem_id=f'{tabname}{page.name}_extra_page', elem_classes="extra-networks-page")
                 ui.pages.append(page_html)
                 tab.select(ui_tab_change, _js="getENActivePage", inputs=[ui.button_details], outputs=[ui.button_scan, ui.button_save, ui.button_model])
+    if shared.cmd_opts.profile:
+        errors.profile(pr, 'ExtraNetworks')
+        pr.disable()
         # ui.tabs.change(fn=ui_tab_change, inputs=[], outputs=[ui.button_scan, ui.button_save])
 
     def fn_save_img(image):
@@ -787,21 +812,25 @@ def create_ui(container, button_parent, tabname, skip_indexing = False):
             prompt = ''
         params = generation_parameters_copypaste.parse_generation_parameters(prompt)
         fn = os.path.join(shared.opts.styles_dir, os.path.splitext(name)[0] + '.json')
+        prompt = params.get('Prompt', '')
         item = {
-            "type": 'Style',
             "name": name,
-            "title": name,
-            "filename": fn,
-            "search_term": None,
-            "preview": None,
             "description": '',
-            "prompt": params.get('Prompt', ''),
+            "prompt": prompt,
             "negative": params.get('Negative prompt', ''),
             "extra": '',
-            "local_preview": None,
+            # "type": 'Style',
+            # "title": name,
+            # "filename": fn,
+            # "search_term": None,
+            # "preview": None,
+            # "local_preview": None,
         }
         shared.writefile(item, fn, silent=True)
-        shared.log.debug(f"Extra network quick save style: item={item['name']} filename='{fn}'")
+        if len(prompt) > 0:
+            shared.log.debug(f"Extra network quick save style: item={name} filename='{fn}'")
+        else:
+            shared.log.warning(f"Extra network quick save model: item={name} filename='{fn}' prompt is empty")
 
     def ui_sort_cards(msg):
         shared.log.debug(f'Extra networks: {msg}')

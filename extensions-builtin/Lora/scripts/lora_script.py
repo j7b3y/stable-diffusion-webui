@@ -1,42 +1,22 @@
 import re
-import gradio as gr
-from fastapi import FastAPI
-import network
 import networks
-import lora  # noqa:F401 # pylint: disable=unused-import
-# import lora_patches
-import extra_networks_lora
-import ui_extra_networks_lora
-from modules import script_callbacks, ui_extra_networks, extra_networks, shared
+import lora # noqa:F401 # pylint: disable=unused-import
+from network import NetworkOnDisk
+from ui_extra_networks_lora import ExtraNetworksPageLora
+from extra_networks_lora import ExtraNetworkLora
+from modules import script_callbacks, ui_extra_networks, extra_networks
 
 
-# def unload():
-#     networks.originals.undo()
+re_lora = re.compile("<lora:([^:]+):")
 
 
 def before_ui():
-    ui_extra_networks.register_page(ui_extra_networks_lora.ExtraNetworksPageLora())
-    networks.extra_network_lora = extra_networks_lora.ExtraNetworkLora()
+    ui_extra_networks.register_page(ExtraNetworksPageLora())
+    networks.extra_network_lora = ExtraNetworkLora()
     extra_networks.register_extra_network(networks.extra_network_lora)
-    # extra_networks.register_extra_network_alias(networks.extra_network_lora, "lyco")
 
 
-# networks.originals = lora_patches.LoraPatches()
-script_callbacks.on_model_loaded(networks.assign_network_names_to_compvis_modules)
-# script_callbacks.on_script_unloaded(unload)
-script_callbacks.on_before_ui(before_ui)
-script_callbacks.on_infotext_pasted(networks.infotext_pasted)
-
-
-shared.options_templates.update(shared.options_section(('extra_networks', "Extra Networks"), {
-    # "sd_lora": shared.OptionInfo("None", "Add network to prompt", gr.Dropdown, lambda: {"choices": ["None", *networks.available_networks], "visible": False}, refresh=networks.list_available_networks),
-    "sd_lora": shared.OptionInfo("None", "Add network to prompt", gr.Dropdown, {"choices": ["None"], "visible": False}),
-    # "lora_show_all": shared.OptionInfo(False, "Always show all networks on the Lora page").info("otherwise, those detected as for incompatible version of Stable Diffusion will be hidden"),
-    # "lora_hide_unknown_for_versions": shared.OptionInfo([], "Hide networks of unknown versions for model versions", gr.CheckboxGroup, {"choices": ["SD1", "SD2", "SDXL"]}),
-}))
-
-
-def create_lora_json(obj: network.NetworkOnDisk):
+def create_lora_json(obj: NetworkOnDisk):
     return {
         "name": obj.name,
         "alias": obj.alias,
@@ -45,7 +25,7 @@ def create_lora_json(obj: network.NetworkOnDisk):
     }
 
 
-def api_networks(_: gr.Blocks, app: FastAPI):
+def api_networks(_, app):
     @app.get("/sdapi/v1/loras")
     async def get_loras():
         return [create_lora_json(obj) for obj in networks.available_networks.values()]
@@ -55,16 +35,11 @@ def api_networks(_: gr.Blocks, app: FastAPI):
         return networks.list_available_networks()
 
 
-script_callbacks.on_app_started(api_networks)
-re_lora = re.compile("<lora:([^:]+):")
-
-
 def infotext_pasted(infotext, d): # pylint: disable=unused-argument
-    hashes = d.get("Lora hashes")
-    if not hashes:
+    hashes = d.get("Lora hashes", None)
+    if hashes is None:
         return
-    hashes = [x.strip().split(':', 1) for x in hashes.split(",")]
-    hashes = {x[0].strip().replace(",", ""): x[1].strip() for x in hashes}
+
     def network_replacement(m):
         alias = m.group(1)
         shorthash = hashes.get(alias)
@@ -74,7 +49,14 @@ def infotext_pasted(infotext, d): # pylint: disable=unused-argument
         if network_on_disk is None:
             return m.group(0)
         return f'<lora:{network_on_disk.get_alias()}:'
+
+    hashes = [x.strip().split(':', 1) for x in hashes.split(",")]
+    hashes = {x[0].strip().replace(",", ""): x[1].strip() for x in hashes}
     d["Prompt"] = re.sub(re_lora, network_replacement, d["Prompt"])
 
 
+script_callbacks.on_app_started(api_networks)
+script_callbacks.on_before_ui(before_ui)
+script_callbacks.on_model_loaded(networks.assign_network_names_to_compvis_modules)
+script_callbacks.on_infotext_pasted(networks.infotext_pasted)
 script_callbacks.on_infotext_pasted(infotext_pasted)

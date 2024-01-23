@@ -6,8 +6,6 @@ import shutil
 import logging
 import platform
 import subprocess
-import io
-import pstats
 import cProfile
 import pkg_resources
 
@@ -29,6 +27,7 @@ opts = {}
 args = Dot({
     'debug': False,
     'reset': False,
+    'profile': False,
     'upgrade': False,
     'skip_extensions': False,
     'skip_requirements': False,
@@ -68,6 +67,7 @@ def setup_logging():
         def get(self):
             return self.buffer
 
+    from functools import partial, partialmethod
     from logging.handlers import RotatingFileHandler
     from rich.theme import Theme
     from rich.logging import RichHandler
@@ -78,6 +78,11 @@ def setup_logging():
     if args.log:
         global log_file # pylint: disable=global-statement
         log_file = args.log
+
+    logging.TRACE = 25
+    logging.addLevelName(logging.TRACE, 'TRACE')
+    logging.Logger.trace = partialmethod(logging.Logger.log, logging.TRACE)
+    logging.trace = partial(logging.log, logging.TRACE)
 
     level = logging.DEBUG if args.debug else logging.INFO
     log.setLevel(logging.DEBUG) # log to file is always at level debug for facility `sd`
@@ -143,19 +148,9 @@ def print_dict(d):
     return ' '.join([f'{k}={v}' for k, v in d.items()])
 
 
-def print_profile(profile: cProfile.Profile, msg: str):
-    try:
-        from rich import print # pylint: disable=redefined-builtin
-    except Exception:
-        pass
-    profile.disable()
-    stream = io.StringIO()
-    ps = pstats.Stats(profile, stream=stream)
-    ps.sort_stats(pstats.SortKey.CUMULATIVE).print_stats(15)
-    profile = None
-    lines = stream.getvalue().split('\n')
-    lines = [line for line in lines if '<frozen' not in line and '{built-in' not in line and '/logging' not in line and '/rich' not in line]
-    print(f'Profile {msg}:', '\n'.join(lines))
+def print_profile(profiler: cProfile.Profile, msg: str):
+    from modules.errors import profile
+    profile(profiler, msg)
 
 
 # check if package is installed
@@ -277,19 +272,21 @@ def branch(folder):
 
 
 # update git repository
-def update(folder, current_branch = False):
+def update(folder, current_branch = False, rebase = True):
     try:
         git('config rebase.Autostash true')
     except Exception:
         pass
+    arg = '--rebase --force' if rebase else ''
     if current_branch:
-        git('pull --rebase --force', folder)
-        return
+        res = git(f'pull {arg}', folder)
+        return res
     b = branch(folder)
     if branch is None:
-        git('pull --rebase --force', folder)
+        res = git(f'pull {arg}', folder)
     else:
-        git(f'pull origin {b} --rebase --force', folder)
+        res = git(f'pull origin {b} {arg}', folder)
+    return res
 
 
 # clone git repository
@@ -368,7 +365,8 @@ def check_torch():
     log.debug(f'Torch allowed: cuda={allow_cuda} rocm={allow_rocm} ipex={allow_ipex} diml={allow_directml} openvino={allow_openvino}')
     torch_command = os.environ.get('TORCH_COMMAND', '')
     xformers_package = os.environ.get('XFORMERS_PACKAGE', 'none')
-    install('onnxruntime', 'onnxruntime', ignore=True)
+    if not installed('onnxruntime', quiet=True) and not installed('onnxruntime-gpu', quiet=True): # allow either
+        install('onnxruntime', 'onnxruntime', ignore=True)
     if torch_command != '':
         pass
     elif allow_cuda and (shutil.which('nvidia-smi') is not None or args.use_xformers or os.path.exists(os.path.join(os.environ.get('SystemRoot') or r'C:\Windows', 'System32', 'nvidia-smi.exe'))):
@@ -435,18 +433,40 @@ def check_torch():
         os.environ.setdefault('NEOReadDebugKeys', '1')
         os.environ.setdefault('ClDeviceGlobalMemSizeAvailablePercent', '100')
         if "linux" in sys.platform:
-            torch_command = os.environ.get('TORCH_COMMAND', 'torch==2.0.1a0 torchvision==0.15.2a0 intel_extension_for_pytorch==2.0.110+xpu --extra-index-url https://pytorch-extension.intel.com/release-whl/stable/xpu/us/')
-            os.environ.setdefault('TENSORFLOW_PACKAGE', 'tensorflow==2.13.0 intel-extension-for-tensorflow[gpu]')
+            torch_command = os.environ.get('TORCH_COMMAND', 'torch==2.1.0a0 torchvision==0.16.0a0 intel-extension-for-pytorch==2.1.10+xpu --extra-index-url https://pytorch-extension.intel.com/release-whl/stable/xpu/us/')
+            os.environ.setdefault('TENSORFLOW_PACKAGE', 'tensorflow==2.14.0 intel-extension-for-tensorflow[xpu]==2.14.0.1')
+            if os.environ.get('DISABLE_VENV_LIBS', None) is None:
+                install(os.environ.get('MKL_PACKAGE', 'mkl==2024.0.0'), 'mkl')
+                install(os.environ.get('DPCPP_PACKAGE', 'mkl-dpcpp==2024.0.0'), 'mkl-dpcpp')
         else:
-            pytorch_pip = 'https://github.com/Nuullll/intel-extension-for-pytorch/releases/download/v2.0.110%2Bxpu-master%2Bdll-bundle/torch-2.0.0a0+gite9ebda2-cp310-cp310-win_amd64.whl'
-            torchvision_pip = 'https://github.com/Nuullll/intel-extension-for-pytorch/releases/download/v2.0.110%2Bxpu-master%2Bdll-bundle/torchvision-0.15.2a0+fa99a53-cp310-cp310-win_amd64.whl'
-            ipex_pip = 'https://github.com/Nuullll/intel-extension-for-pytorch/releases/download/v2.0.110%2Bxpu-master%2Bdll-bundle/intel_extension_for_pytorch-2.0.110+gitc6ea20b-cp310-cp310-win_amd64.whl'
+            if sys.version_info[1] == 11:
+                pytorch_pip = 'https://github.com/Nuullll/intel-extension-for-pytorch/releases/download/v2.1.10%2Bxpu/torch-2.1.0a0+cxx11.abi-cp311-cp311-win_amd64.whl'
+                torchvision_pip = 'https://github.com/Nuullll/intel-extension-for-pytorch/releases/download/v2.1.10%2Bxpu/torchvision-0.16.0a0+cxx11.abi-cp311-cp311-win_amd64.whl'
+                ipex_pip = 'https://github.com/Nuullll/intel-extension-for-pytorch/releases/download/v2.1.10%2Bxpu/intel_extension_for_pytorch-2.1.10+xpu-cp311-cp311-win_amd64.whl'
+            elif sys.version_info[1] == 10:
+                pytorch_pip = 'https://github.com/Nuullll/intel-extension-for-pytorch/releases/download/v2.1.10%2Bxpu/torch-2.1.0a0+cxx11.abi-cp310-cp310-win_amd64.whl'
+                torchvision_pip = 'https://github.com/Nuullll/intel-extension-for-pytorch/releases/download/v2.1.10%2Bxpu/torchvision-0.16.0a0+cxx11.abi-cp310-cp310-win_amd64.whl'
+                ipex_pip = 'https://github.com/Nuullll/intel-extension-for-pytorch/releases/download/v2.1.10%2Bxpu/intel_extension_for_pytorch-2.1.10+xpu-cp310-cp310-win_amd64.whl'
+            else:
+                pytorch_pip = 'torch==2.1.0a0'
+                torchvision_pip = 'torchvision==0.16.0a0'
+                ipex_pip = 'intel-extension-for-pytorch==2.1.10+xpu --extra-index-url https://pytorch-extension.intel.com/release-whl/stable/xpu/us/'
+                if os.environ.get('DISABLE_VENV_LIBS', None) is None:
+                    install(os.environ.get('MKL_PACKAGE', 'mkl==2024.0.0'), 'mkl')
+                    install(os.environ.get('DPCPP_PACKAGE', 'mkl-dpcpp==2024.0.0'), 'mkl-dpcpp')
             torch_command = os.environ.get('TORCH_COMMAND', f'{pytorch_pip} {torchvision_pip} {ipex_pip}')
-        install('openvino', 'openvino', ignore=True)
+        install(os.environ.get('OPENVINO_PACKAGE', 'openvino==2023.2.0'), 'openvino', ignore=True)
+        install('nncf==2.7.0', 'nncf', ignore=True)
         install('onnxruntime-openvino', 'onnxruntime-openvino', ignore=True)
     elif allow_openvino and args.use_openvino:
         log.info('Using OpenVINO')
-        torch_command = os.environ.get('TORCH_COMMAND', 'torch==2.1.1 torchvision==0.16.1 --index-url https://download.pytorch.org/whl/cpu')
+        torch_command = os.environ.get('TORCH_COMMAND', 'torch==2.1.2 torchvision==0.16.2 --index-url https://download.pytorch.org/whl/cpu')
+        install(os.environ.get('OPENVINO_PACKAGE', 'openvino==2023.2.0'), 'openvino')
+        install('onnxruntime-openvino', 'onnxruntime-openvino', ignore=True) # TODO openvino: numpy version conflicts with tensorflow and doesn't support Python 3.11
+        install('nncf==2.7.0', 'nncf')
+        os.environ.setdefault('PYTORCH_TRACING_MODE', 'TORCHFX')
+        os.environ.setdefault('NEOReadDebugKeys', '1')
+        os.environ.setdefault('ClDeviceGlobalMemSizeAvailablePercent', '100')
     else:
         machine = platform.machine()
         if sys.platform == 'darwin':
@@ -513,13 +533,8 @@ def check_torch():
         log.debug(f'Cannot install xformers package: {e}')
     if opts.get('cuda_compile_backend', '') == 'hidet':
         install('hidet', 'hidet')
-    if args.use_openvino or opts.get('cuda_compile_backend', '') == 'openvino_fx':
-        uninstall('openvino-nightly') # TODO openvino: remove after people had enough time upgrading
-        install('openvino==2023.2.0', 'openvino')
-        install('onnxruntime-openvino', 'onnxruntime-openvino', ignore=True) # TODO openvino: numpy version conflicts with tensorflow and doesn't support Python 3.11
-        os.environ.setdefault('PYTORCH_TRACING_MODE', 'TORCHFX')
-        os.environ.setdefault('NEOReadDebugKeys', '1')
-        os.environ.setdefault('ClDeviceGlobalMemSizeAvailablePercent', '100')
+    if opts.get('nncf_compress_weights', False):
+        install('nncf==2.7.0', 'nncf')
     if args.profile:
         print_profile(pr, 'Torch')
 
@@ -566,36 +581,6 @@ def install_packages():
         print_profile(pr, 'Packages')
 
 
-# clone required repositories
-def install_repositories():
-    """
-    if args.profile:
-        pr = cProfile.Profile()
-        pr.enable()
-    def d(name):
-        return os.path.join(os.path.dirname(__file__), 'repositories', name)
-    log.info('Verifying repositories')
-    os.makedirs(os.path.join(os.path.dirname(__file__), 'repositories'), exist_ok=True)
-    stable_diffusion_repo = os.environ.get('STABLE_DIFFUSION_REPO', "https://github.com/Stability-AI/stablediffusion.git")
-    stable_diffusion_commit = os.environ.get('STABLE_DIFFUSION_COMMIT_HASH', None)
-    clone(stable_diffusion_repo, d('stable-diffusion-stability-ai'), stable_diffusion_commit)
-    taming_transformers_repo = os.environ.get('TAMING_TRANSFORMERS_REPO', "https://github.com/CompVis/taming-transformers.git")
-    taming_transformers_commit = os.environ.get('TAMING_TRANSFORMERS_COMMIT_HASH', None)
-    clone(taming_transformers_repo, d('taming-transformers'), taming_transformers_commit)
-    k_diffusion_repo = os.environ.get('K_DIFFUSION_REPO', 'https://github.com/crowsonkb/k-diffusion.git')
-    k_diffusion_commit = os.environ.get('K_DIFFUSION_COMMIT_HASH', '0455157')
-    clone(k_diffusion_repo, d('k-diffusion'), k_diffusion_commit)
-    codeformer_repo = os.environ.get('CODEFORMER_REPO', 'https://github.com/sczhou/CodeFormer.git')
-    codeformer_commit = os.environ.get('CODEFORMER_COMMIT_HASH', "7a584fd")
-    clone(codeformer_repo, d('CodeFormer'), codeformer_commit)
-    blip_repo = os.environ.get('BLIP_REPO', 'https://github.com/salesforce/BLIP.git')
-    blip_commit = os.environ.get('BLIP_COMMIT_HASH', None)
-    clone(blip_repo, d('BLIP'), blip_commit)
-    if args.profile:
-        print_profile(pr, 'Repositories')
-    """
-
-
 # run extension installer
 def run_extension_installer(folder):
     path_installer = os.path.realpath(os.path.join(folder, "install.py"))
@@ -624,14 +609,14 @@ def list_extensions_folder(folder, quiet=False):
     if disabled_extensions_all != 'none':
         return []
     disabled_extensions = opts.get('disabled_extensions', [])
-    enabled_extensions = [x for x in os.listdir(folder) if x not in disabled_extensions and not x.startswith('.')]
+    enabled_extensions = [x for x in os.listdir(folder) if os.path.isdir(os.path.join(folder, x)) and x not in disabled_extensions and not x.startswith('.')]
     if not quiet:
         log.info(f'Extensions: enabled={enabled_extensions} {name}')
     return enabled_extensions
 
 
 # run installer for each installed and enabled extension and optionally update them
-def install_extensions():
+def install_extensions(force=False):
     if args.profile:
         pr = cProfile.Profile()
         pr.enable()
@@ -642,6 +627,7 @@ def install_extensions():
     extensions_duplicates = []
     extensions_enabled = []
     extension_folders = [extensions_builtin_dir] if args.safe else [extensions_builtin_dir, extensions_dir]
+    res = []
     for folder in extension_folders:
         if not os.path.isdir(folder):
             continue
@@ -652,10 +638,11 @@ def install_extensions():
                 extensions_duplicates.append(ext)
                 continue
             extensions_enabled.append(ext)
-            if args.upgrade:
+            if args.upgrade or force:
                 try:
-                    update(os.path.join(folder, ext))
+                    res.append(update(os.path.join(folder, ext)))
                 except Exception:
+                    res.append(f'Error updating extension: {os.path.join(folder, ext)}')
                     log.error(f'Error updating extension: {os.path.join(folder, ext)}')
             if not args.skip_extensions:
                 run_extension_installer(os.path.join(folder, ext))
@@ -673,17 +660,18 @@ def install_extensions():
         log.warning(f'Extensions duplicates: {extensions_duplicates}')
     if args.profile:
         print_profile(pr, 'Extensions')
+    return '\n'.join(res)
 
 
 # initialize and optionally update submodules
-def install_submodules():
+def install_submodules(force=True):
     if args.profile:
         pr = cProfile.Profile()
         pr.enable()
     log.info('Verifying submodules')
     txt = git('submodule')
     # log.debug(f'Submodules list: {txt}')
-    if 'no submodule mapping found' in txt:
+    if force and 'no submodule mapping found' in txt:
         log.warning('Attempting repository recover')
         git('add .')
         git('stash')
@@ -696,17 +684,19 @@ def install_submodules():
     git('submodule --quiet update --init --recursive')
     git('submodule --quiet sync --recursive')
     submodules = txt.splitlines()
+    res = []
     for submodule in submodules:
         try:
             name = submodule.split()[1].strip()
             if args.upgrade:
-                update(name)
+                res.append(update(name))
             else:
                 branch(name)
         except Exception:
             log.error(f'Error updating submodule: {submodule}')
     if args.profile:
         print_profile(pr, 'Submodule')
+    return '\n'.join(res)
 
 
 def ensure_base_requirements():
@@ -767,8 +757,10 @@ def set_environment():
     os.environ.setdefault('TF_ENABLE_ONEDNN_OPTS', '0')
     os.environ.setdefault('USE_TORCH', '1')
     os.environ.setdefault('UVICORN_TIMEOUT_KEEP_ALIVE', '60')
+    os.environ.setdefault('KINETO_LOG_LEVEL', '3')
+    os.environ.setdefault('DO_NOT_TRACK', '1')
     os.environ.setdefault('HF_HUB_CACHE', opts.get('hfcache_dir', os.path.join(os.path.expanduser('~'), '.cache', 'huggingface', 'hub')))
-    log.debug(f'Cache folder: {os.environ.get("HF_HUB_CACHE")}')
+    log.debug(f'HF cache folder: {os.environ.get("HF_HUB_CACHE")}')
     if sys.platform == 'darwin':
         os.environ.setdefault('PYTORCH_ENABLE_MPS_FALLBACK', '1')
 
@@ -833,9 +825,8 @@ def check_version(offline=False, reset=True): # pylint: disable=unused-argument
     if args.skip_all:
         return
     if not os.path.exists('.git'):
-        log.error('Not a git repository')
-        if not args.ignore:
-            sys.exit(1)
+        log.warning('Not a git repository, all git operations are disabled')
+        args.skip_git = True # pylint: disable=attribute-defined-outside-init
     log.info(f'Version: {print_dict(get_version())}')
     if args.version or args.skip_git:
         return
@@ -928,7 +919,7 @@ def add_args(parser):
     group.add_argument('--reset', default = os.environ.get("SD_RESET",False), action='store_true', help = "Reset main repository to latest version, default: %(default)s")
     group.add_argument('--upgrade', default = os.environ.get("SD_UPGRADE",False), action='store_true', help = "Upgrade main repository to latest version, default: %(default)s")
     group.add_argument('--requirements', default = os.environ.get("SD_REQUIREMENTS",False), action='store_true', help = "Force re-check of requirements, default: %(default)s")
-    group.add_argument('--quick', default = os.environ.get("SD_QUICK",False), action='store_true', help = "Run with startup sequence only, default: %(default)s")
+    group.add_argument('--quick', default = os.environ.get("SD_QUICK",False), action='store_true', help = "Bypass version checks, default: %(default)s")
     group.add_argument('--use-directml', default = os.environ.get("SD_USEDIRECTML",False), action='store_true', help = "Use DirectML if no compatible GPU is detected, default: %(default)s")
     group.add_argument("--use-openvino", default = os.environ.get("SD_USEOPENVINO",False), action='store_true', help="Use Intel OpenVINO backend, default: %(default)s")
     group.add_argument("--use-ipex", default = os.environ.get("SD_USEIPEX",False), action='store_true', help="Force use Intel OneAPI XPU backend, default: %(default)s")
