@@ -4,7 +4,7 @@ import numpy as np
 from PIL import Image
 from modules.shared import log
 from modules.errors import display
-from modules import devices
+from modules import devices, images
 
 from modules.control.proc.hed import HEDdetector
 from modules.control.proc.canny import CannyDetector
@@ -14,7 +14,6 @@ from modules.control.proc.lineart_anime import LineartAnimeDetector
 from modules.control.proc.pidi import PidiNetDetector
 from modules.control.proc.mediapipe_face import MediapipeFaceDetector
 from modules.control.proc.shuffle import ContentShuffleDetector
-
 from modules.control.proc.leres import LeresDetector
 from modules.control.proc.midas import MidasDetector
 from modules.control.proc.mlsd import MLSDdetector
@@ -26,6 +25,7 @@ from modules.control.proc.zoe import ZoeDetector
 from modules.control.proc.marigold import MarigoldDetector
 from modules.control.proc.dpt import DPTDetector
 from modules.control.proc.glpn import GLPNDetector
+from modules.control.proc.depth_anything import DepthAnythingDetector
 
 
 models = {}
@@ -33,6 +33,8 @@ cache_dir = 'models/control/processors'
 debug = log.trace if os.environ.get('SD_CONTROL_DEBUG', None) is not None else lambda *args, **kwargs: None
 debug('Trace: CONTROL')
 config = {
+    # placeholder
+    'None': {},
     # pose models
     'OpenPose': {'class': OpenposeDetector, 'checkpoint': True, 'params': {'include_body': True, 'include_hand': False, 'include_face': False}},
     'DWPose': {'class': DWposeDetector, 'checkpoint': False, 'model': 'Tiny', 'params': {'min_confidence': 0.3}},
@@ -57,6 +59,7 @@ config = {
     'Shuffle': {'class': ContentShuffleDetector, 'checkpoint': False, 'params': {}},
     'DPT Depth Hybrid': {'class': DPTDetector, 'checkpoint': False, 'params': {}},
     'GLPN Depth': {'class': GLPNDetector, 'checkpoint': False, 'params': {}},
+    'Depth Anything': {'class': DepthAnythingDetector, 'checkpoint': True, 'load_config': {'pretrained_model_or_path': 'LiheYoung/depth_anything_vitl14' }, 'params': { 'color_map': 'inferno' }},
     # 'Midas Depth Large': {'class': MidasDetector, 'checkpoint': True, 'params': {'bg_th': 0.1, 'depth_and_normal': False}, 'load_config': {'pretrained_model_or_path': 'Intel/dpt-large', 'model_type': "dpt_large", 'filename': ''}},
     # 'Zoe Depth Zoe': {'class': ZoeDetector, 'checkpoint': True, 'params': {}},
     # 'Zoe Depth NK': {'class': ZoeDetector, 'checkpoint': True, 'params': {}, 'load_config': {'pretrained_model_or_path': 'halffried/gyre_zoedepth', 'filename': 'ZoeD_M12_NK.safetensors', 'model_type': "zoedepth_nk"}},
@@ -67,7 +70,7 @@ def list_models(refresh=False):
     global models # pylint: disable=global-statement
     if not refresh and len(models) > 0:
         return models
-    models = ['None'] + list(config)
+    models = list(config)
     debug(f'Control list processors: path={cache_dir} models={models}')
     return models
 
@@ -116,6 +119,7 @@ def update_settings(*settings):
     update(['Marigold Depth', 'params', 'color_map'], settings[24])
     update(['Marigold Depth', 'params', 'denoising_steps'], settings[25])
     update(['Marigold Depth', 'params', 'ensemble_size'], settings[26])
+    update(['Depth Anything', 'params', 'color_map'], settings[27])
 
 
 class Processor():
@@ -129,12 +133,13 @@ class Processor():
         if processor_id is not None:
             self.load()
 
-    def reset(self):
+    def reset(self, processor_id: str = None):
         if self.model is not None:
-            log.debug(f'Control Processor unloaded: id="{self.processor_id}"')
+            debug(f'Control Processor unloaded: id="{self.processor_id}"')
         self.model = None
-        self.processor_id = None
-        self.override = None
+        self.processor_id = processor_id
+        # self.override = None
+        devices.torch_gc()
         self.load_config = { 'cache_dir': cache_dir }
 
     def config(self, processor_id = None):
@@ -201,24 +206,34 @@ class Processor():
             display(e, 'Control Processor load')
             return f'Processor load filed: {processor_id}'
 
-    def __call__(self, image_input: Image, mode: str = 'RGB'):
+    def __call__(self, image_input: Image, mode: str = 'RGB', resize_mode: int = 0, resize_name: str = 'None', scale_tab: int = 1, scale_by: float = 1.0, local_config: dict = {}):
+        if self.processor_id is None or self.processor_id == 'None':
+            return image_input
         if self.override is not None:
+            debug(f'Control Processor: id="{self.processor_id}" override={self.override}')
             image_input = self.override
+            if resize_mode != 0 and resize_name != 'None':
+                if scale_tab == 1:
+                    width_before, height_before = int(image_input.width * scale_by), int(image_input.height * scale_by)
+                    debug(f'Control resize: op=before image={image_input} width={width_before} height={height_before} mode={resize_mode} name={resize_name}')
+                    image_input = images.resize_image(resize_mode, image_input, width_before, height_before, resize_name)
         image_process = image_input
         if image_input is None:
-            log.error('Control Processor: no input')
-            return image_process
-        if self.model is None:
-            # log.error('Control Processor: model not loaded')
+            # log.error('Control Processor: no input')
             return image_process
         if config[self.processor_id].get('dirty', False):
             processor_id = self.processor_id
             config[processor_id].pop('dirty')
             self.reset()
             self.load(processor_id)
+        if self.model is None:
+            # log.error('Control Processor: model not loaded')
+            return image_process
         try:
             t0 = time.time()
             kwargs = config.get(self.processor_id, {}).get('params', None)
+            if kwargs:
+                kwargs.update(local_config)
             if self.resize:
                 image_resized = image_input.resize((512, 512), Image.Resampling.LANCZOS)
             else:
@@ -241,9 +256,9 @@ class Processor():
         return image_process
 
     def preview(self):
-        import modules.ui_control
-        input_image = modules.ui_control.input_source
+        import modules.ui_control_helpers as helpers
+        input_image = helpers.input_source
         if isinstance(input_image, list):
             input_image = input_image[0]
-        if isinstance(input_image, Image.Image):
-            return self.__call__(input_image)
+        debug('Control process preview')
+        return self.__call__(input_image)

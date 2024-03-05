@@ -122,13 +122,14 @@ def load_network(name, network_on_disk) -> network.Network:
             key_network_without_network_parts, network_part = key_network.split(".", 1)
         # if debug:
         #     shared.log.debug(f'LoRA load: name="{name}" full={key_network} network={network_part} key={key_network_without_network_parts}')
-        key, sd_module = convert(key_network_without_network_parts)
-        if sd_module is None:
+        key, sd_module = convert(key_network_without_network_parts)  # Now returns lists
+        if sd_module[0] is None:
             keys_failed_to_match[key_network] = key
             continue
-        if key not in matched_networks:
-            matched_networks[key] = network.NetworkWeights(network_key=key_network, sd_key=key, w={}, sd_module=sd_module)
-        matched_networks[key].w[network_part] = weight
+        for k, module in zip(key, sd_module):
+            if k not in matched_networks:
+                matched_networks[k] = network.NetworkWeights(network_key=key_network, sd_key=k, w={}, sd_module=module)
+            matched_networks[k].w[network_part] = weight
     for key, weights in matched_networks.items():
         net_module = None
         for nettype in module_types:
@@ -176,15 +177,12 @@ def load_networks(names, te_multipliers=None, unet_multipliers=None, dyn_dims=No
     if recompile_model:
         backup_cuda_compile = shared.opts.cuda_compile
         backup_nncf_compress_weights = shared.opts.nncf_compress_weights
-        backup_nncf_compress_text_encoder_weights = shared.opts.nncf_compress_text_encoder_weights
         sd_models.unload_model_weights(op='model')
         shared.opts.cuda_compile = False
-        shared.opts.nncf_compress_weights = False
-        shared.opts.nncf_compress_text_encoder_weights = False
+        shared.opts.nncf_compress_weights = []
         sd_models.reload_model_weights(op='model')
         shared.opts.cuda_compile = backup_cuda_compile
         shared.opts.nncf_compress_weights = backup_nncf_compress_weights
-        shared.opts.nncf_compress_text_encoder_weights = backup_nncf_compress_text_encoder_weights
 
     loaded_networks.clear()
     for i, (network_on_disk, name) in enumerate(zip(networks_on_disk, names)):
@@ -195,10 +193,13 @@ def load_networks(names, te_multipliers=None, unet_multipliers=None, dyn_dims=No
             try:
                 if recompile_model:
                     shared.compiled_model_state.lora_model.append(f"{name}:{te_multipliers[i] if te_multipliers else 1.0}")
-                if shared.backend == shared.Backend.DIFFUSERS and shared.opts.lora_force_diffusers: # OpenVINO only works with Diffusers LoRa loading.
-                    # or getattr(network_on_disk, 'shorthash', '').lower() == 'aaebf6360f7d' # sd15-lcm
-                    # or getattr(network_on_disk, 'shorthash', '').lower() == '3d18b05e4f56' # sdxl-lcm
-                    # or getattr(network_on_disk, 'shorthash', '').lower() == '813ea5fb1c67' # turbo sdxl-turbo
+                shorthash = getattr(network_on_disk, 'shorthash', '').lower()
+                if shared.backend == shared.Backend.DIFFUSERS and (shared.opts.lora_force_diffusers # OpenVINO only works with Diffusers LoRa loading.
+                        or shorthash == 'aaebf6360f7d' # sd15-lcm
+                        or shorthash == '3d18b05e4f56' # sdxl-lcm
+                        or shorthash == 'b71dcb732467' # sdxl-tcd
+                        or shorthash == '813ea5fb1c67' # sdxl-turbo
+                    ):
                     net = load_diffusers(name, network_on_disk, lora_scale=te_multipliers[i] if te_multipliers else 1.0)
                 else:
                     net = load_network(name, network_on_disk)
@@ -303,7 +304,7 @@ def network_apply_weights(self: Union[torch.nn.Conv2d, torch.nn.Linear, torch.nn
                         if len(self.weight.shape) == 4 and self.weight.shape[1] == 9:
                             # inpainting model. zero pad updown to make channel[1]  4 to 9
                             updown = torch.nn.functional.pad(updown, (0, 0, 0, 0, 0, 5)) # pylint: disable=not-callable
-                        self.weight += updown
+                        self.weight = torch.nn.Parameter(self.weight + updown)
                         if ex_bias is not None and hasattr(self, 'bias'):
                             if self.bias is None:
                                 self.bias = torch.nn.Parameter(ex_bias)
@@ -440,16 +441,16 @@ def list_available_networks():
     forbidden_network_aliases.clear()
     available_network_hash_lookup.clear()
     forbidden_network_aliases.update({"none": 1, "Addams": 1})
-    os.makedirs(shared.cmd_opts.lora_dir, exist_ok=True)
     directories = []
     if os.path.exists(shared.cmd_opts.lora_dir):
         directories.append(shared.cmd_opts.lora_dir)
     else:
-        shared.log.warning('LoRA directory not found: path="{shared.cmd_opts.lora_dir}"')
+        shared.log.warning(f'LoRA directory not found: path="{shared.cmd_opts.lora_dir}"')
     if os.path.exists(shared.cmd_opts.lyco_dir) and shared.cmd_opts.lyco_dir != shared.cmd_opts.lora_dir:
         directories.append(shared.cmd_opts.lyco_dir)
+
     def add_network(filename):
-        if os.path.isdir(filename):
+        if not os.path.isfile(filename):
             return
         name = os.path.splitext(os.path.basename(filename))[0]
         try:
@@ -457,8 +458,10 @@ def list_available_networks():
             available_networks[entry.name] = entry
             if entry.alias in available_network_aliases:
                 forbidden_network_aliases[entry.alias.lower()] = 1
-            available_network_aliases[entry.name] = entry
-            available_network_aliases[entry.alias] = entry
+            if shared.opts.lora_preferred_name == 'filename':
+                available_network_aliases[entry.name] = entry
+            else:
+                available_network_aliases[entry.alias] = entry
             if entry.shorthash:
                 available_network_hash_lookup[entry.shorthash] = entry
         except OSError as e:  # should catch FileNotFoundError and PermissionError etc.

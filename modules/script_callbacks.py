@@ -9,7 +9,7 @@ import modules.errors as errors
 
 
 def report_exception(e, c, job):
-    errors.display(e, f'executing callback: {c.script} {job}')
+    errors.display(e, f'Executing callback: {c.script} {job}')
 
 
 class ImageSaveParams:
@@ -109,7 +109,6 @@ callback_map = dict(
     callbacks_after_process=[],
     callbacks_model_loaded=[],
     callbacks_ui_tabs=[],
-    callbacks_ui_train_tabs=[],
     callbacks_ui_settings=[],
     callbacks_before_image_saved=[],
     callbacks_image_saved=[],
@@ -123,6 +122,7 @@ callback_map = dict(
     callbacks_infotext_pasted=[],
     callbacks_script_unloaded=[],
     callbacks_before_ui=[],
+    callbacks_after_ui=[],
     callbacks_on_reload=[],
 )
 
@@ -209,16 +209,6 @@ def ui_tabs_callback():
         except Exception as e:
             report_exception(e, c, 'ui_tabs_callback')
     return res
-
-
-def ui_train_tabs_callback(params: UiTrainTabParams):
-    for c in callback_map['callbacks_ui_train_tabs']:
-        try:
-            t0 = time.time()
-            c.callback(params)
-            timer(t0, c.script, 'ui_train_tabs')
-        except Exception as e:
-            report_exception(e, c, 'callbacks_ui_train_tabs')
 
 
 def ui_settings_callback():
@@ -359,6 +349,16 @@ def before_ui_callback():
             report_exception(e, c, 'before_ui')
 
 
+def after_ui_callback():
+    for c in reversed(callback_map['callbacks_after_ui']):
+        try:
+            t0 = time.time()
+            c.callback()
+            timer(t0, c.script, 'after_ui')
+        except Exception as e:
+            report_exception(e, c, 'after_ui')
+
+
 def add_callback(callbacks, fun):
     # stack = [x for x in inspect.stack(0) if x.filename != __file__]
     # filename = stack[0].filename if len(stack) > 0 else 'unknown file'
@@ -421,13 +421,6 @@ def on_ui_tabs(callback):
     elem_id is HTML id for the tab
     """
     add_callback(callback_map['callbacks_ui_tabs'], callback)
-
-
-def on_ui_train_tabs(callback):
-    """register a function to be called when the UI is creating new tabs for the train tab.
-    Create your new tabs with gr.Tab.
-    """
-    add_callback(callback_map['callbacks_ui_train_tabs'], callback)
 
 
 def on_ui_settings(callback):
@@ -536,3 +529,8 @@ def on_script_unloaded(callback):
 def on_before_ui(callback):
     """register a function to be called before the UI is created."""
     add_callback(callback_map['callbacks_before_ui'], callback)
+
+
+def on_after_ui(callback):
+    """register a function to be called before the UI is created."""
+    add_callback(callback_map['callbacks_after_ui'], callback)

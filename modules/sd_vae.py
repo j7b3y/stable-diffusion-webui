@@ -195,6 +195,9 @@ def load_vae_diffusers(model_file, vae_file=None, vae_source="unknown-source"):
                 vae = diffusers.ConsistencyDecoderVAE.from_pretrained('openai/consistency-decoder', **diffusers_load_config) # consistency decoder does not have from single file, so we'll just download it once more
             else:
                 vae = diffusers.AutoencoderKL.from_single_file(vae_file, **diffusers_load_config)
+                if getattr(vae.config, 'scaling_factor', 0) == 0.18125 and shared.sd_model_type == 'sdxl':
+                    vae.config.scaling_factor = 0.13025
+                    shared.log.debug('Diffusers VAE: fix scaling factor')
             vae = vae.to(devices.dtype_vae)
         else:
             if 'consistency-decoder' in vae_file:
@@ -239,11 +242,10 @@ def reload_vae_weights(sd_model=None, vae_file=unspecified):
         vae_source = "function-argument"
     if loaded_vae_file == vae_file:
         return None
-    if not getattr(sd_model, 'has_accelerate', False):
-        if shared.cmd_opts.lowvram or shared.cmd_opts.medvram:
-            lowvram.send_everything_to_cpu()
-        else:
-            sd_model.to(devices.cpu)
+    if shared.backend == shared.Backend.ORIGINAL and (shared.cmd_opts.lowvram or shared.cmd_opts.medvram):
+        lowvram.send_everything_to_cpu()
+    # else:
+    #    sd_models.move_model(sd_model, devices.cpu)
 
     if shared.backend == shared.Backend.ORIGINAL:
         sd_hijack.model_hijack.undo_hijack(sd_model)
@@ -260,6 +262,6 @@ def reload_vae_weights(sd_model=None, vae_file=unspecified):
             if vae is not None:
                 sd_models.set_diffuser_options(sd_model, vae=vae, op='vae')
 
-    if not shared.cmd_opts.lowvram and not shared.cmd_opts.medvram and not getattr(sd_model, 'has_accelerate', False):
-        sd_model.to(devices.device)
+    if not shared.cmd_opts.lowvram and not shared.cmd_opts.medvram:
+        sd_models.move_model(sd_model, devices.device)
     return sd_model

@@ -120,6 +120,17 @@ class GridAnnotation:
         self.size = None
 
 
+def get_font(fontsize):
+    try:
+        return ImageFont.truetype(
+            shared.opts.font or "javascript/notosans-nerdfont-regular.ttf", fontsize
+        )
+    except Exception:
+        return ImageFont.truetype(
+            "javascript/notosans-nerdfont-regular.ttf", fontsize
+        )
+
+
 def draw_grid_annotations(im, width, height, hor_texts, ver_texts, margin=0, title=None):
     def wrap(drawing, text, font, line_length):
         lines = ['']
@@ -131,17 +142,11 @@ def draw_grid_annotations(im, width, height, hor_texts, ver_texts, margin=0, tit
                 lines.append(word)
         return lines
 
-    def get_font(fontsize):
-        try:
-            return ImageFont.truetype(shared.opts.font or 'javascript/notosans-nerdfont-regular.ttf', fontsize)
-        except Exception:
-            return ImageFont.truetype('javascript/notosans-nerdfont-regular.ttf', fontsize)
-
     def draw_texts(drawing: ImageDraw, draw_x, draw_y, lines, initial_fnt, initial_fontsize):
         for line in lines:
             font = initial_fnt
             fontsize = initial_fontsize
-            while drawing.multiline_textbbox((0,0), text=line.text, font=font)[0] > line.allowed_width and fontsize > 0:
+            while drawing.multiline_textbbox((0,0), text=line.text, font=font)[2] > line.allowed_width and fontsize > 0:
                 fontsize -= 1
                 font = get_font(fontsize)
             drawing.multiline_text((draw_x, draw_y + line.size[1] / 2), line.text, font=font, fill=shared.opts.font_color if line.is_active else color_inactive, anchor="mm", align="center")
@@ -236,7 +241,7 @@ def resize_image(resize_mode, im, width, height, upscaler_name=None, output_type
 
     def resize(im, w, h):
         if upscaler_name is None or upscaler_name == "None" or im.mode == 'L':
-            return im.resize((w, h), resample=Image.Resampling.LANCZOS)
+            return im.resize((w, h), resample=Image.Resampling.LANCZOS) # force for mask
         scale = max(w / im.width, h / im.height)
         if scale > 1.0:
             upscalers = [x for x in shared.sd_upscalers if x.name == upscaler_name]
@@ -248,8 +253,8 @@ def resize_image(resize_mode, im, width, height, upscaler_name=None, output_type
                 if upscaler is not None:
                     im = latent(im, w, h, upscaler)
                 else:
-                    shared.log.warning(f"Could not find upscaler: {upscaler_name or '<empty string>'} using fallback: {upscaler.name}")
-        if im.width != w or im.height != h:
+                    shared.log.warning(f"Resize upscaler: invalid={upscaler_name} fallback={upscaler.name}")
+        if im.width != w or im.height != h: # probably downsample after upscaler created larger image
             im = im.resize((w, h), resample=Image.Resampling.LANCZOS)
         return im
 
@@ -338,7 +343,7 @@ class FilenameGenerator:
         else:
             debug(f'Filename generator init: {seed} {prompt}')
         self.p = p
-        if seed is not None and seed > 0:
+        if seed is not None and int(seed) > 0:
             self.seed = seed
         elif hasattr(p, 'all_seeds'):
             self.seed = p.all_seeds[0]
@@ -534,13 +539,13 @@ def atomically_save_image():
         if shared.opts.image_watermark_enabled:
             image = set_watermark(image, shared.opts.image_watermark)
         size = os.path.getsize(fn) if os.path.exists(fn) else 0
-        shared.log.debug(f'Saving: image="{fn}" type={image_format} resolution={image.width}x{image.height} size={size}')
+        shared.log.info(f'Saving: image="{fn}" type={image_format} resolution={image.width}x{image.height} size={size}')
         # additional metadata saved in files
         if shared.opts.save_txt and len(exifinfo) > 0:
             try:
                 with open(filename_txt, "w", encoding="utf8") as file:
                     file.write(f"{exifinfo}\n")
-                shared.log.debug(f'Saving: text="{filename_txt}" len={len(exifinfo)}')
+                shared.log.info(f'Saving: text="{filename_txt}" len={len(exifinfo)}')
             except Exception as e:
                 shared.log.warning(f'Image description save failed: {filename_txt} {e}')
         # actual save
@@ -589,7 +594,7 @@ def atomically_save_image():
             entry = { 'id': idx, 'filename': filename, 'time': datetime.datetime.now().isoformat(), 'info': exifinfo }
             entries.append(entry)
             shared.writefile(entries, fn, mode='w', silent=True)
-            shared.log.debug(f'Saving: json="{fn}" records={len(entries)}')
+            shared.log.info(f'Saving: json="{fn}" records={len(entries)}')
         save_queue.task_done()
 
 
@@ -605,7 +610,7 @@ def save_image(image, path, basename='', seed=None, prompt=None, extension=share
         return None, None
     if not check_grid_size([image]):
         return None, None
-    if path is None or len(path) == 0: # set default path to avoid errors when functions are triggered manually or via api and param is not set
+    if path is None or path == '': # set default path to avoid errors when functions are triggered manually or via api and param is not set
         path = shared.opts.outdir_save
     namegen = FilenameGenerator(p, seed, prompt, image, grid=grid)
     suffix = suffix if suffix is not None else ''
@@ -805,18 +810,19 @@ def image_data(data):
     err2 = None
     try:
         image = Image.open(io.BytesIO(data))
-        errors.log.debug(f'Decoded object: image={image}')
-        textinfo, _ = read_info_from_image(image)
-        return textinfo, None
+        image.load()
+        info, _ = read_info_from_image(image)
+        errors.log.debug(f'Decoded object: image={image} metadata={info}')
+        return info, None
     except Exception as e:
         err1 = e
     try:
         if len(data) > 1024 * 10:
             errors.log.warning(f'Error decoding object: data too long: {len(data)}')
             return gr.update(), None
-        text = data.decode('utf8')
-        errors.log.debug(f'Decoded object: size={len(text)}')
-        return text, None
+        info = data.decode('utf8')
+        errors.log.debug(f'Decoded object: data={len(data)} metadata={info}')
+        return info, None
     except Exception as e:
         err2 = e
     errors.log.error(f'Error decoding object: {err1 or err2}')

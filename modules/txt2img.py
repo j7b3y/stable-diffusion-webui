@@ -1,6 +1,5 @@
 import os
-import modules.scripts
-from modules import shared, processing
+from modules import shared, processing, scripts
 from modules.generation_parameters_copypaste import create_override_settings_dict
 from modules.ui import plaintext_to_html
 
@@ -14,14 +13,14 @@ def txt2img(id_task,
             steps, sampler_index, hr_sampler_index,
             full_quality, restore_faces, tiling,
             n_iter, batch_size,
-            cfg_scale, image_cfg_scale, diffusers_guidance_rescale, sag_scale,
+            cfg_scale, image_cfg_scale, diffusers_guidance_rescale, sag_scale, cfg_end,
             clip_skip,
             seed, subseed, subseed_strength, seed_resize_from_h, seed_resize_from_w,
             height, width,
             enable_hr, denoising_strength,
             hr_scale, hr_upscaler, hr_force, hr_second_pass_steps, hr_resize_x, hr_resize_y,
             refiner_steps, refiner_start, refiner_prompt, refiner_negative,
-            hdr_clamp, hdr_boundary, hdr_threshold, hdr_center, hdr_channel_shift, hdr_full_shift, hdr_maximize, hdr_max_center, hdr_max_boundry,
+            hdr_mode, hdr_brightness, hdr_color, hdr_sharpen, hdr_clamp, hdr_boundary, hdr_threshold, hdr_maximize, hdr_max_center, hdr_max_boundry, hdr_color_picker, hdr_tint_ratio,
             override_settings_texts,
             *args):
 
@@ -59,6 +58,7 @@ def txt2img(id_task,
         image_cfg_scale=image_cfg_scale,
         diffusers_guidance_rescale=diffusers_guidance_rescale,
         sag_scale=sag_scale,
+        cfg_end=cfg_end,
         clip_skip=clip_skip,
         width=width,
         height=height,
@@ -77,18 +77,19 @@ def txt2img(id_task,
         refiner_start=refiner_start,
         refiner_prompt=refiner_prompt,
         refiner_negative=refiner_negative,
-        hdr_clamp=hdr_clamp, hdr_boundary=hdr_boundary, hdr_threshold=hdr_threshold,
-        hdr_center=hdr_center, hdr_channel_shift=hdr_channel_shift, hdr_full_shift=hdr_full_shift,
-        hdr_maximize=hdr_maximize, hdr_max_center=hdr_max_center, hdr_max_boundry=hdr_max_boundry,
+        hdr_mode=hdr_mode, hdr_brightness=hdr_brightness, hdr_color=hdr_color, hdr_sharpen=hdr_sharpen, hdr_clamp=hdr_clamp,
+        hdr_boundary=hdr_boundary, hdr_threshold=hdr_threshold, hdr_maximize=hdr_maximize, hdr_max_center=hdr_max_center, hdr_max_boundry=hdr_max_boundry, hdr_color_picker=hdr_color_picker, hdr_tint_ratio=hdr_tint_ratio,
         override_settings=override_settings,
     )
-    p.scripts = modules.scripts.scripts_txt2img
+    p.scripts = scripts.scripts_txt2img
     p.script_args = args
-    processed = modules.scripts.scripts_txt2img.run(p, *args)
+    processed = scripts.scripts_txt2img.run(p, *args)
     if processed is None:
         processed = processing.process_images(p)
     p.close()
     if processed is None:
         return [], '', '', 'Error: processing failed'
     generation_info_js = processed.js() if processed is not None else ''
+    if processed is None:
+        return [], generation_info_js, '', 'Error: no images'
     return processed.images, generation_info_js, processed.info, plaintext_to_html(processed.comments)

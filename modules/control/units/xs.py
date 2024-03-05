@@ -3,7 +3,7 @@ import time
 from typing import Union
 from diffusers import StableDiffusionPipeline, StableDiffusionXLPipeline
 from modules.shared import log, opts, listdir
-from modules import errors
+from modules import errors, sd_models
 from modules.control.units.xs_model import ControlNetXSModel
 from modules.control.units.xs_pipe import StableDiffusionControlNetXSPipeline, StableDiffusionXLControlNetXSPipeline
 from modules.control.units import detect
@@ -70,7 +70,7 @@ class ControlNetXS():
 
     def reset(self):
         if self.model is not None:
-            log.debug(f'Control {what} model unloaded')
+            debug(f'Control {what} model unloaded')
         self.model = None
         self.model_id = None
 
@@ -126,7 +126,8 @@ class ControlNetXSPipeline():
                 scheduler=pipeline.scheduler,
                 # feature_extractor=getattr(pipeline, 'feature_extractor', None),
                 controlnet=controlnet, # can be a list
-            ).to(pipeline.device)
+            )
+            sd_models.move_model(self.pipeline, pipeline.device)
         elif detect.is_sd15(pipeline):
             self.pipeline = StableDiffusionControlNetXSPipeline(
                 vae=pipeline.vae,
@@ -138,7 +139,8 @@ class ControlNetXSPipeline():
                 requires_safety_checker=False,
                 safety_checker=None,
                 controlnet=controlnet, # can be a list
-            ).to(pipeline.device)
+            )
+            sd_models.move_model(self.pipeline, pipeline.device)
         else:
             log.error(f'Control {what} pipeline: class={pipeline.__class__.__name__} unsupported model type')
             return

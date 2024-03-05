@@ -3,10 +3,11 @@ import mimetypes
 import gradio as gr
 import gradio.routes
 import gradio.utils
-from modules.call_queue import wrap_gradio_call
-from modules import timer, gr_hijack, shared, theme, sd_models, script_callbacks, modelloader, ui_common, ui_loadsave, ui_symbols, ui_javascript, generation_parameters_copypaste
+from modules.call_queue import wrap_gradio_call, wrap_gradio_gpu_call # pylint: disable=unused-import
+from modules import timer, gr_hijack, shared, theme, sd_models, script_callbacks, modelloader, ui_common, ui_loadsave, ui_symbols, ui_javascript, generation_parameters_copypaste, call_queue
 from modules.paths import script_path, data_path # pylint: disable=unused-import
 from modules.dml import directml_override_opts
+from modules.onnx_impl import install_olive
 import modules.scripts
 import modules.errors
 
@@ -14,10 +15,13 @@ import modules.errors
 modules.errors.install()
 mimetypes.init()
 mimetypes.add_type('application/javascript', '.js')
+mimetypes.add_type('image/webp', '.webp')
 log = shared.log
 opts = shared.opts
 cmd_opts = shared.cmd_opts
 ui_system_tabs = None
+paste_function = None
+wrap_queued_call = call_queue.wrap_queued_call
 switch_values_symbol = ui_symbols.switch
 detect_image_size_symbol = ui_symbols.detect
 paste_symbol = ui_symbols.paste
@@ -27,7 +31,6 @@ folder_symbol = ui_symbols.folder
 extra_networks_symbol = ui_symbols.networks
 apply_style_symbol = ui_symbols.apply
 save_style_symbol = ui_symbols.save
-paste_function = None
 gr_hijack.init()
 
 
@@ -102,7 +105,9 @@ def get_value_for_setting(key):
     value = getattr(opts, key)
     info = opts.data_labels[key]
     args = info.component_args() if callable(info.component_args) else info.component_args or {}
-    args = {k: v for k, v in args.items() if k not in {'precision', 'multiselect'}}
+    args = {k: v for k, v in args.items() if k not in {'precision', 'multiselect', 'visible'}}
+    # if not args:
+    #    return gr.update()
     return gr.update(value=value, **args)
 
 
@@ -139,21 +144,10 @@ def create_ui(startup_timer = None):
         ui_postprocessing.create_ui()
         timer.startup.record("ui-extras")
 
-    with gr.Blocks(analytics_enabled=False) as train_interface:
-        from modules import ui_train
-        ui_train.create_ui()
-        timer.startup.record("ui-train")
-
     with gr.Blocks(analytics_enabled=False) as models_interface:
         from modules import ui_models
         ui_models.create_ui()
         timer.startup.record("ui-models")
-
-    with gr.Blocks(analytics_enabled=False) as interrogate_interface:
-        from modules import ui_interrogate
-        ui_interrogate.create_ui()
-        timer.startup.record("ui-interrogate")
-
 
     def create_setting_component(key, is_quicksettings=False):
         def fun():
@@ -232,6 +226,8 @@ def create_ui(startup_timer = None):
                 continue
             if opts.set(key, value):
                 changed.append(key)
+        if shared.opts.cuda_compile_backend == "olive-ai":
+            install_olive()
         if cmd_opts.use_directml:
             directml_override_opts()
         if cmd_opts.use_openvino:
@@ -253,15 +249,17 @@ def create_ui(startup_timer = None):
             return opts.dumpjson(), f'{len(changed)} Settings changed without save: {", ".join(changed)}'
         return opts.dumpjson(), f'{len(changed)} Settings changed{": " if len(changed) > 0 else ""}{", ".join(changed)}'
 
-    def run_settings_single(value, key):
+    def run_settings_single(value, key, progress=False):
         if not opts.same_type(value, opts.data_labels[key].default):
             return gr.update(visible=True), opts.dumpjson()
         if not opts.set(key, value):
             return gr.update(value=getattr(opts, key)), opts.dumpjson()
+        if key == "cuda_compile_backend" and value == "olive-ai":
+            install_olive()
         if cmd_opts.use_directml:
             directml_override_opts()
         opts.save(shared.config_filename)
-        log.debug(f'Setting changed: key={key}, value={value}')
+        log.debug(f'Setting changed: {key}={value} progress={progress}')
         return get_value_for_setting(key), opts.dumpjson()
 
     with gr.Blocks(analytics_enabled=False) as settings_interface:
@@ -335,6 +333,10 @@ def create_ui(startup_timer = None):
                 loadsave.create_ui()
                 create_dirty_indicator("tab_defaults", [], interactive=False)
 
+            with gr.TabItem("ONNX", id="onnx_config", elem_id="tab_onnx"):
+                from modules.onnx_impl import ui as ui_onnx
+                ui_onnx.create_ui()
+
             with gr.TabItem("Change log", id="change_log", elem_id="system_tab_changelog"):
                 with open('CHANGELOG.md', 'r', encoding='utf-8') as f:
                     md = f.read()
@@ -363,8 +365,6 @@ def create_ui(startup_timer = None):
     interfaces += [(img2img_interface, "Image", "img2img")]
     interfaces += [(control_interface, "Control", "control")] if control_interface is not None else []
     interfaces += [(extras_interface, "Process", "process")]
-    interfaces += [(interrogate_interface, "Interrogate", "interrogate")]
-    interfaces += [(train_interface, "Train", "train")]
     interfaces += [(models_interface, "Models", "models")]
     interfaces += script_callbacks.ui_tabs_callback()
     interfaces += [(settings_interface, "System", "system")]
@@ -403,6 +403,7 @@ def create_ui(startup_timer = None):
                 loadsave.add_block(interface, ifid)
             loadsave.add_component(f"webui/Tabs@{tabs.elem_id}", tabs)
             loadsave.setup_ui()
+
         if opts.notification_audio_enable and os.path.exists(os.path.join(script_path, opts.notification_audio_path)):
             gr.Audio(interactive=False, value=os.path.join(script_path, opts.notification_audio_path), elem_id="audio_notification", visible=False)
 
@@ -420,13 +421,17 @@ def create_ui(startup_timer = None):
         for _i, k, _item in quicksettings_list:
             component = component_dict[k]
             info = opts.data_labels[k]
-            change_handler = component.release if hasattr(component, 'release') else component.change
-            change_handler(
-                fn=lambda value, k=k: run_settings_single(value, key=k),
-                inputs=[component],
-                outputs=[component, text_settings],
-                show_progress=info.refresh is not None,
-            )
+            if isinstance(component, gr.components.Textbox):
+                change_handlers = [component.blur, component.submit]
+            else:
+                change_handlers = [component.release if hasattr(component, 'release') else component.change]
+            for change_handler in change_handlers:
+                change_handler(
+                    fn=lambda value, k=k, progress=info.refresh is not None: run_settings_single(value, key=k, progress=progress),
+                    inputs=[component],
+                    outputs=[component, text_settings],
+                    show_progress=info.refresh is not None,
+                )
 
         dummy_component = gr.Textbox(visible=False, value='dummy')
         button_set_checkpoint = gr.Button('Change model', elem_id='change_checkpoint', visible=False)

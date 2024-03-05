@@ -84,10 +84,14 @@ class Shared(sys.modules[__name__].__class__):
                 model_type = 'sd'
             elif "LatentConsistencyModel" in self.sd_model.__class__.__name__:
                 model_type = 'sd' # lcm is compatible with sd
+            elif "InstaFlowPipeline" in self.sd_model.__class__.__name__:
+                model_type = 'sd' # instaflow is compatible with sd
             elif "AnimateDiffPipeline" in self.sd_model.__class__.__name__:
-                model_type = 'sd' # ad is compatible with sd
+                model_type = 'sd' # sd is compatible with sd
             elif "Kandinsky" in self.sd_model.__class__.__name__:
                 model_type = 'kandinsky'
+            elif "Cascade" in self.sd_model.__class__.__name__:
+                model_type = 'sc'
             else:
                 model_type = self.sd_model.__class__.__name__
         except Exception:

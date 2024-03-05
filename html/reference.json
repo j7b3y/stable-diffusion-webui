@@ -44,18 +44,22 @@
   },
   "StabilityAI SD-XL 1.0 Base": {
     "path": "stabilityai/stable-diffusion-xl-base-1.0",
+    "variant": "fp16",
     "desc": "Stable Diffusion XL (SDXL) is the latest AI image generation model that is tailored towards more photorealistic outputs with more detailed imagery and composition compared to previous SD models, including SD 2.1. It can make realistic faces, legible text within the images, and better image composition, all while using shorter and simpler prompts at a greatly increased base resolution of 1024x1024. Just like its predecessors, SDXL has the ability to generate image variations using image-to-image prompting, inpainting (reimagining of the selected parts of an image), and outpainting (creating new parts that lie outside the image borders).",
     "preview": "stabilityai--stable-diffusion-xl-base-1.0.jpg"
   },
   "StabilityAI SD 2.1 Turbo": {
-    "path": "stabilityai/sd-turbo",
-    "alt": "sd_turbo.safetensors@https://huggingface.co/stabilityai/sd-turbo/resolve/main/sd_turbo.safetensors?download=true",
+    "_path": "stabilityai/sd-turbo",
+    "path": "sd_turbo.safetensors@https://huggingface.co/stabilityai/sd-turbo/resolve/main/sd_turbo.safetensors?download=true",
+    "variant": "fp16",
     "desc": "SD-Turbo is a distilled version of Stable Diffusion 2.1, trained for real-time synthesis. SD-Turbo is based on a novel training method called Adversarial Diffusion Distillation (ADD) (see the technical report), which allows sampling large-scale foundational image diffusion models in 1 to 4 steps at high image quality. This approach uses score distillation to leverage large-scale off-the-shelf image diffusion models as a teacher signal and combines this with an adversarial loss to ensure high image fidelity even in the low-step regime of one or two sampling steps.",
     "preview": "stabilityai--sd-turbo.jpg",
     "original": true
   },
   "StabilityAI SD-XL Turbo": {
-    "path": "stabilityai/sdxl-turbo",
+    "_path": "stabilityai/sdxl-turbo",
+    "path": "sdxl_turbo.safetensors@https://huggingface.co/stabilityai/sdxl-turbo/resolve/main/sd_xl_turbo_1.0_fp16.safetensors?download=true",
+    "variant": "fp16",
     "desc": "SDXL-Turbo is a distilled version of SDXL 1.0, trained for real-time synthesis. SDXL-Turbo is based on a novel training method called Adversarial Diffusion Distillation (ADD) (see the technical report), which allows sampling large-scale foundational image diffusion models in 1 to 4 steps at high image quality. This approach uses score distillation to leverage large-scale off-the-shelf image diffusion models as a teacher signal and combines this with an adversarial loss to ensure high image fidelity even in the low-step regime of one or two sampling steps.",
     "preview": "stabilityai--sdxl-turbo.jpg"
   },
@@ -68,6 +72,12 @@
     "path": "stabilityai/stable-video-diffusion-img2vid-xt",
     "desc": "(SVD) Image-to-Video is a latent diffusion model trained to generate short video clips from an image conditioning. This model was trained to generate 25 frames at resolution 576x1024 given a context frame of the same size, finetuned from SVD Image-to-Video [14 frames]. We also finetune the widely used f8-decoder for temporal consistency.",
     "preview": "stabilityai--stable-video-diffusion-img2vid-xt.jpg"
+  },
+  "StabilityAI Stable Cascade": {
+    "path": "huggingface/stabilityai/stable-cascade",
+    "skip": true,
+    "desc": "Stable Cascade is a diffusion model built upon the Würstchen architecture and its main difference to other models like Stable Diffusion is that it is working at a much smaller latent space. Why is this important? The smaller the latent space, the faster you can run inference and the cheaper the training becomes. How small is the latent space? Stable Diffusion uses a compression factor of 8, resulting in a 1024x1024 image being encoded to 128x128. Stable Cascade achieves a compression factor of 42, meaning that it is possible to encode a 1024x1024 image to 24x24, while maintaining crisp reconstructions. The text-conditional model is then trained in the highly compressed latent space. Previous versions of this architecture, achieved a 16x cost reduction over Stable Diffusion 1.5",
+    "preview": "stabilityai--stable-cascade.jpg"
   },
   "Segmind Vega": {
     "path": "segmind/Segmind-Vega",
@@ -83,6 +93,21 @@
     "path": "segmind/tiny-sd",
     "desc": "Segmind's Tiny-SD offers a compact, efficient, and distilled version of Realistic Vision 4.0 and is up to 80% faster than SD1.5",
     "preview": "segmind--tiny-sd.jpg"
+  },
+  "Segmind SegMoE SD 4x2": {
+    "path": "segmind/SegMoE-SD-4x2-v0",
+    "desc": "SegMoE-SD-4x2-v0 is an untrained Segmind Mixture of Diffusion Experts Model generated using segmoe from 4 Expert SD1.5 models. SegMoE is a powerful framework for dynamically combining Stable Diffusion Models into a Mixture of Experts within minutes without training",
+    "preview": "segmind--SegMoE-SD-4x2-v0.jpg"
+  },
+  "Segmind SegMoE XL 2x1": {
+    "path": "segmind/SegMoE-2x1-v0",
+    "desc": "SegMoE-2x1-v0 is an untrained Segmind Mixture of Diffusion Experts Model generated using segmoe from 2 Expert SDXL models. SegMoE is a powerful framework for dynamically combining Stable Diffusion Models into a Mixture of Experts within minutes without training",
+    "preview": "segmind--SegMoE-2x1-v0.jpg"
+  },
+  "Segmind SegMoE XL 4x2": {
+    "path": "segmind/SegMoE-4x2-v0",
+    "desc": "SegMoE-4x2-v0 is an untrained Segmind Mixture of Diffusion Experts Model generated using segmoe from 4 Expert SDXL models. SegMoE is a powerful framework for dynamically combining Stable Diffusion Models into a Mixture of Experts within minutes without training",
+    "preview": "segmind--SegMoE-4x2-v0.jpg"
   },
   "LCM SD-1.5 Dreamshaper 7": {
     "path": "SimianLuo/LCM_Dreamshaper_v7",
@@ -144,6 +169,11 @@
     "desc": "Playground v2 is a diffusion-based text-to-image generative model. The model was trained from scratch by the research team at Playground. Images generated by Playground v2 are favored 2.5 times more than those produced by Stable Diffusion XL, according to Playground’s user study.",
     "preview": "playgroundai--playground-v2-1024px-aesthetic.jpg"
   },
+  "Playground v2.5": {
+    "path": "playground-v2.5-1024px-aesthetic.fp16.safetensors@https://huggingface.co/playgroundai/playground-v2.5-1024px-aesthetic/resolve/main/playground-v2.5-1024px-aesthetic.fp16.safetensors?download=true",
+    "desc": "Playground v2.5 is a diffusion-based text-to-image generative model, and a successor to Playground v2. Playground v2.5 is the state-of-the-art open-source model in aesthetic quality. Our user studies demonstrate that our model outperforms SDXL, Playground v2, PixArt-α, DALL-E 3, and Midjourney 5.2.",
+    "preview": "playgroundai--playground-v2-1024px-aesthetic.jpg"
+  },
   "DeepFloyd IF Medium": {
     "path": "DeepFloyd/IF-I-M-v1.0",
     "desc": "DeepFloyd-IF is a pixel-based text-to-image triple-cascaded diffusion model, that can generate pictures with new state-of-the-art for photorealism and language understanding. The result is a highly efficient model that outperforms current state-of-the-art models, achieving a zero-shot FID-30K score of 6.66 on the COCO dataset. It is modular and composed of frozen text mode and three pixel cascaded diffusion modules, each designed to generate images of increasing resolution: 64x64, 256x256, and 1024x1024.",
@@ -159,6 +189,14 @@
     "desc": "Amused is a lightweight text to image model based off of the muse architecture. Amused is particularly useful in applications that require a lightweight and fast model such as generating many images quickly at once.",
     "preview": "amused--amused-512.jpg"
   },
+  "KOALA 700M": {
+    "path": "huggingface/etri-vilab/koala-700m-llava-cap",
+    "variant": "fp16",
+    "skip": true,
+    "desc": "Fast text-to-image model, called KOALA, by compressing SDXL's U-Net and distilling knowledge from SDXL into our model. KOALA-700M can generate a 1024x1024 image in less than 1.5 seconds on an NVIDIA 4090 GPU, which is more than 2x faster than SDXL.",
+    "preview": "etri-vilab--koala-700m-llava-cap.jpg"
+  },
+  
   "Tsinghua UniDiffuser": {
     "path": "thu-ml/unidiffuser-v1",
     "desc": "UniDiffuser is a unified diffusion framework to fit all distributions relevant to a set of multi-modal data in one transformer. UniDiffuser is able to perform image, text, text-to-image, image-to-text, and image-text pair generation by setting proper timesteps without additional overhead.\nSpecifically, UniDiffuser employs a variation of transformer, called U-ViT, which parameterizes the joint noise prediction network. Other components perform as encoders and decoders of different modalities, including a pretrained image autoencoder from Stable Diffusion, a pretrained image ViT-B/32 CLIP encoder, a pretrained text ViT-L CLIP encoder, and a GPT-2 text decoder finetuned by ourselves.",
@@ -168,5 +206,10 @@
     "path": "salesforce/blipdiffusion",
     "desc": "BLIP-Diffusion, a new subject-driven image generation model that supports multimodal control which consumes inputs of subject images and text prompts. Unlike other subject-driven generation models, BLIP-Diffusion introduces a new multimodal encoder which is pre-trained to provide subject representation.",
     "preview": "salesforce--blipdiffusion.jpg"
+  },
+  "InstaFlow 0.9B": {
+    "path": "XCLiu/instaflow_0_9B_from_sd_1_5",
+    "desc": "InstaFlow is an ultra-fast, one-step image generator that achieves image quality close to Stable Diffusion. This efficiency is made possible through a recent Rectified Flow technique, which trains probability flows with straight trajectories, hence inherently requiring only a single step for fast inference.",
+    "preview": "XCLiu--instaflow_0_9B_from_sd_1_5.jpg"
   }
 }

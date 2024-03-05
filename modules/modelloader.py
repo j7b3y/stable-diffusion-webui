@@ -12,6 +12,7 @@ from modules.paths import script_path, models_path
 
 
 diffuser_repos = []
+debug = shared.log.trace if os.environ.get('SD_DOWNLOAD_DEBUG', None) is not None else lambda *args, **kwargs: None
 
 
 def download_civit_meta(model_path: str, model_id):
@@ -79,11 +80,14 @@ def download_civit_model_thread(model_name, model_url, model_path, model_type, p
     if model_type == 'LoRA':
         model_file = os.path.join(shared.opts.lora_dir, model_path, model_name)
         temp_file = os.path.join(shared.opts.lora_dir, model_path, temp_file)
+    elif model_type == 'Embedding':
+        model_file = os.path.join(shared.opts.embeddings_dir, model_path, model_name)
+        temp_file = os.path.join(shared.opts.embeddings_dir, model_path, temp_file)
     else:
         model_file = os.path.join(shared.opts.ckpt_dir, model_path, model_name)
         temp_file = os.path.join(shared.opts.ckpt_dir, model_path, temp_file)
 
-    res = f'CivitAI download: name={model_name} url={model_url} path={model_path} temp={temp_file}'
+    res = f'CivitAI download: name="{model_name}" url="{model_url}" path="{model_path}" temp="{temp_file}"'
     if os.path.isfile(model_file):
         res += ' already exists'
         shared.log.warning(res)
@@ -100,7 +104,7 @@ def download_civit_model_thread(model_name, model_url, model_path, model_type, p
 
     r = shared.req(model_url, headers=headers, stream=True)
     total_size = int(r.headers.get('content-length', 0))
-    res += f' size={round((starting_pos + total_size)/1024/1024)}Mb'
+    res += f' size={round((starting_pos + total_size)/1024/1024, 2)}Mb'
     shared.log.info(res)
     shared.state.begin('civitai')
     block_size = 16384 # 16KB blocks
@@ -116,7 +120,7 @@ def download_civit_model_thread(model_name, model_url, model_path, model_type, p
                     written = written + len(data)
                     f.write(data)
                     download_pbar.update(task, description="Download", completed=written)
-            if written < 1024 * 1024: # min threshold
+            if written < 1024: # min threshold
                 os.remove(temp_file)
                 raise ValueError(f'removed invalid download: bytes={written}')
             if preview is not None:
@@ -166,31 +170,35 @@ def download_diffusers_model(hub_id: str, cache_dir: str = None, download_config
         download_config["mirror"] = mirror
     if custom_pipeline is not None and len(custom_pipeline) > 0:
         download_config["custom_pipeline"] = custom_pipeline
-    shared.log.debug(f"Diffusers downloading: {hub_id} args={download_config}")
+    shared.log.debug(f'Diffusers downloading: id="{hub_id}" args={download_config}')
+    token = token or shared.opts.huggingface_token
     if token is not None and len(token) > 2:
         shared.log.debug(f"Diffusers authentication: {token}")
         hf.login(token)
     pipeline_dir = None
 
-    ok = True
+    ok = False
     err = None
-    try:
-        pipeline_dir = DiffusionPipeline.download(hub_id, **download_config)
-    except Exception as e:
-        err = e
-        ok = False
-        # shared.log.warning(f"Diffusers download error: {hub_id} {e}")
+    if not ok:
+        try:
+            pipeline_dir = DiffusionPipeline.download(hub_id, **download_config)
+            ok = True
+        except Exception as e:
+            err = e
+            ok = False
+            debug(f'Diffusers download error: id="{hub_id}" {e}')
     if not ok and 'Repository Not Found' not in str(err):
         try:
-            download_config.pop('load_connected_pipeline')
-            download_config.pop('variant')
+            download_config.pop('load_connected_pipeline', None)
+            download_config.pop('variant', None)
             pipeline_dir = hf.snapshot_download(hub_id, **download_config)
-        except Exception:
-            # shared.log.warning(f"Diffusers download error: {hub_id} {e}")
-            pass
-
+        except Exception as e:
+            debug(f'Diffusers download error: id="{hub_id}" {e}')
+            if 'gated' in str(e):
+                shared.log.error(f'Diffusers download error: id="{hub_id}" model access requires login')
+                return None
     if pipeline_dir is None:
-        shared.log.error(f"Diffusers download error: {hub_id} {err}")
+        shared.log.error(f'Diffusers download error: id="{hub_id}" {err}')
         return None
     try:
         model_info_dict = hf.model_info(hub_id).cardData if pipeline_dir is not None else None
@@ -260,7 +268,7 @@ def load_diffusers_models(model_path: str, command_path: str = None, clear=True)
                     pass
         except Exception as e:
             shared.log.error(f"Error listing diffusers: {place} {e}")
-    shared.log.debug(f'Scanning diffusers cache: {model_path} {command_path} items={len(output)} time={time.time()-t0:.2f}')
+    shared.log.debug(f'Scanning diffusers cache: {places} items={len(output)} time={time.time()-t0:.2f}')
     return output
 
 
@@ -288,7 +296,22 @@ def load_reference(name: str):
         shared.log.debug(f'Reference model: {found[0]}')
         return True
     shared.log.debug(f'Reference download: {name}')
-    model_dir = download_diffusers_model(name, shared.opts.diffusers_dir)
+    reference_models = shared.readfile(os.path.join('html', 'reference.json'), silent=False)
+    model_opts = {}
+    for v in reference_models.values():
+        if v.get('path', '') == name:
+            model_opts = v
+            break
+    if model_opts.get('skip', False):
+        return True
+    model_dir = download_diffusers_model(
+        hub_id=name,
+        cache_dir=shared.opts.diffusers_dir,
+        variant=model_opts.get('variant', None),
+        revision=model_opts.get('revision', None),
+        mirror=model_opts.get('mirror', None),
+        custom_pipeline=model_opts.get('custom_pipeline', None)
+    )
     if model_dir is None:
         shared.log.debug(f'Reference download failed: {name}')
         return False
@@ -388,7 +411,7 @@ def load_models(model_path: str, model_url: str = None, command_path: str = None
     @param ext_filter: An optional list of filename extensions to filter by
     @return: A list of paths containing the desired model(s)
     """
-    places = list(set([model_path, command_path]))
+    places = list(set([model_path, command_path])) # noqa:C405
     output = []
     try:
         output:list = [*files_cache.list_files(*places, ext_filter=ext_filter, ext_blacklist=ext_blacklist)]

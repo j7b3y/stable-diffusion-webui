@@ -10,6 +10,7 @@ all_samplers_map = {}
 samplers = all_samplers
 samplers_for_img2img = all_samplers
 samplers_map = {}
+loaded_config = None
 
 
 def list_samplers(backend_name = shared.backend):
@@ -56,9 +57,9 @@ def create_sampler(name, model):
     if shared.backend == shared.Backend.ORIGINAL:
         sampler = config.constructor(model)
         sampler.config = config
-        sampler.initialize(p=None)
         sampler.name = name
-        shared.log.debug(f'Sampler: sampler="{sampler.name}" config={sampler.config.options}')
+        sampler.initialize(p=None)
+        shared.log.debug(f'Sampler: sampler="{name}" config={config.options}')
         return sampler
     elif shared.backend == shared.Backend.DIFFUSERS:
         sampler = config.constructor(model)

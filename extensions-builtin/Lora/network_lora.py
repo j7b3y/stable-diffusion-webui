@@ -1,5 +1,4 @@
 import torch
-
 import diffusers.models.lora as diffusers_lora
 import lyco_helpers
 import network
@@ -42,7 +41,7 @@ class NetworkModuleLora(network.NetworkModule):
         elif is_conv and key == "lora_up.weight" or key == "dyn_down":
             module = torch.nn.Conv2d(weight.shape[1], weight.shape[0], (1, 1), bias=False)
         else:
-            raise AssertionError(f'Lora layer {self.network_key} matched a layer with unsupported type: {type(self.sd_module).__name__}')
+            raise AssertionError(f'Lora unsupported: layer={self.network_key} type={type(self.sd_module).__name__}')
         with torch.no_grad():
             if weight.shape != module.weight.shape:
                 weight = weight.reshape(module.weight.shape)
