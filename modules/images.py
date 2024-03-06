@@ -339,6 +339,7 @@ class FilenameGenerator:
 
         'sampler': lambda self: self.p and self.p.sampler_name,
         'seed': lambda self: self.seed and str(self.seed) or '',
+        'spsf': lambda self, *args: self.spsf(*args),
         'steps': lambda self: self.p and getattr(self.p, 'steps', 0),
         'cfg': lambda self: self.p and getattr(self.p, 'cfg_scale', 0),
         'clip_skip': lambda self: self.p and getattr(self.p, 'clip_skip', 0),
@@ -381,6 +382,24 @@ class FilenameGenerator:
                 default = division[1] if len(division) > 1 else ""
                 if lower.find(expected) >= 0:
                     outres = f'{outres}{expected}'
+                else:
+                    outres = outres if default == "" else f'{outres}{default}'
+        return outres
+    
+    def spsf(self, *args):
+        lower = self.prompt.lower()
+        if self.p is None or self.prompt is None:
+            return None
+        outres = ""
+        for arg in args:
+            if arg != "":
+                division = arg.split("|")
+                expected = division[0].lower()
+                promlist = expected.split(",")
+                default = division[1] if len(division) > 1 else ""
+                recipient = division[2]
+                if any(item in lower for item in promlist):
+                    outres = f'{outres}{recipient}'
                 else:
                     outres = outres if default == "" else f'{outres}{default}'
         return outres
