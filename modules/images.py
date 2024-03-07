@@ -376,7 +376,8 @@ class FilenameGenerator:
         'user': lambda self: self.p.user,
         'vae_filename': lambda self: self.get_vae_filename(),
         'none': lambda self: '',  # Overrides the default, so you can get just the sequence number
-        'image_hash': lambda self, *args: self.image_hash(*args)  # accepts formats: [image_hash<length>] default full hash
+        'image_hash': lambda self, *args: self.image_hash(*args),  # accepts formats: [image_hash<length>] default full hash
+        'spsf': lambda self, *args: self.spsf(*args)
     }
     default_time_format = '%Y%m%d%H%M%S'
 
@@ -500,6 +501,24 @@ class FilenameGenerator:
             res += f'{text}[{pattern}]'
 
         return res
+    
+    def spsf(self, *args):
+        lower = self.prompt.lower()
+        if self.p is None or self.prompt is None:
+            return None
+        outres = ""
+        for arg in args:
+            if arg != "":
+                division = arg.split("|")
+                expected = division[0].lower()
+                promlist = expected.split(",")
+                default = division[1] if len(division) > 1 else ""
+                recipient = division[2]
+                if any(item in lower for item in promlist):
+                    outres = f'{outres}{recipient}'
+                else:
+                    outres = outres if default == "" else f'{outres}{default}'
+        return outres
 
 
 def get_next_sequence_number(path, basename):
