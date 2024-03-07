@@ -1,0 +1,6 @@
+[submodule "models/styles"]
+	path = models/styles
+	url = https://dev.azure.com/j7b3y/Stable%20diffusion/_git/styles
+[submodule "models/Lora"]
+	path = models/Lora
+	url = https://dev.azure.com/j7b3y/Stable%20diffusion/_git/Lora

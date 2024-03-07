@@ -38,3 +38,8 @@ notification.mp3
 /package-lock.json
 /.coverage*
 /test/test_outputs
+
+
+# force included
+!/models/styles
+!/models/Lora
