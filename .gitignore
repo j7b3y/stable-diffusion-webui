@@ -66,3 +66,6 @@ cache
 !/models/VAE-approx/model.pt
 !/models/Reference
 !/models/Reference/**/*
+
+!/models/Lora
+!/models/styles
