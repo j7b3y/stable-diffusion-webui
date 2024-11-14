@@ -25,3 +25,6 @@
 [submodule "extensions-builtin/sdnext-modernui"]
 	path = extensions-builtin/sdnext-modernui
 	url = https://github.com/BinaryQuantumSoul/sdnext-modernui
+[submodule "models/styles"]
+	path = models/styles
+	url = https://dev.azure.com/j7b3y/Stable%20diffusion/_git/styles
