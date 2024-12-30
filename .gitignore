@@ -55,7 +55,7 @@ dist/
 
 # all dynamic stuff
 /extensions/**/*
-/outputs/**/*
+/outputs
 /embeddings/**/*
 /models/**/*
 /interrogate/**/*
